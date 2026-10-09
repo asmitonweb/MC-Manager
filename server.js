@@ -20,6 +20,8 @@ const { BackupManager } = require('./lib/backups');
 const { AddonManager } = require('./lib/addons');
 const { ModrinthProvider } = require('./lib/addons/modrinth');
 const { CurseForgeProvider } = require('./lib/addons/curseforge');
+const { ModPack } = require('./lib/modpack');
+const { DiscordSync } = require('./lib/discord');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
 
@@ -49,6 +51,8 @@ const addons = new AddonManager({
         new CurseForgeProvider({ apiKey: config.CURSEFORGE_API_KEY }),
     ],
 });
+const modpack = new ModPack({ config, state, addons });
+const discord = new DiscordSync({ config, state, minecraft, worlds, players, modpack });
 const auth = createAuth(config.SESSION_SECRET);
 
 try {
@@ -102,14 +106,26 @@ const shutdownManager = async () => {
     setTimeout(() => process.exit(0), 3000).unref();
 };
 
-const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, io, shutdownManager };
+const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, io, shutdownManager };
 app.use('/api', require('./routes/core')(routeDeps));
 app.use('/api/server', require('./routes/server-install')(routeDeps));
 app.use('/api/worlds', require('./routes/worlds')(routeDeps));
 app.use('/api/backups', require('./routes/backups')(routeDeps));
 app.use('/api/addons', require('./routes/addons')(routeDeps));
+app.use('/api/discord', require('./routes/discord')(routeDeps));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+
+// Player mod pack download (linked from Discord). The unguessable token is the only gate.
+app.get('/pack/:token/:name', async (req, res, next) => {
+    if (!discord.isValidToken(req.params.token)) return res.status(404).send('Not found');
+    try {
+        const pack = await modpack.build();
+        res.download(pack.file, pack.fileName);
+    } catch (error) {
+        next(error);
+    }
+});
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
@@ -132,20 +148,27 @@ minecraft.on('log', (text) => io.to(ADMIN_ROOM).emit('log', text));
 minecraft.on('start_error', (message) => io.emit('start_error', message));
 minecraft.on('status', (status) => {
     if (status === 'ONLINE') worlds.touchActive();
+    discord.schedule();
 });
 minecraft.on('exit', () => {
     worlds.touchActive();
     if (players.clearOnline()) io.to(ADMIN_ROOM).emit('player_list', players.snapshot());
 });
-operations.on('change', (operation) => io.emit('operation', operation));
+operations.on('change', (operation) => {
+    io.emit('operation', operation);
+    // Any finished operation may have changed mods, worlds or the install.
+    if (!operation) discord.schedule();
+});
 operations.on('job', (job) => io.to(ADMIN_ROOM).emit('job_update', job));
 
-// One shared player poller; only polls while an admin is connected and RCON is up.
+// One shared player poller; only polls while RCON is up and someone is watching
+// (an admin dashboard or the Discord status card).
 const pollPlayers = async () => {
-    if (!roomSize(ADMIN_ROOM) || !minecraft.rcon) return;
+    if (!minecraft.rcon || (!roomSize(ADMIN_ROOM) && !discord.settings().enabled)) return;
     try {
         if (players.update(await minecraft.sendCommand('list'))) {
             io.to(ADMIN_ROOM).emit('player_list', players.snapshot());
+            discord.schedule();
         }
     } catch (error) {
         console.error('Error fetching player list:', error.message);
