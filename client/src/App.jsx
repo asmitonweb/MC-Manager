@@ -15,6 +15,7 @@ import ServerControls from './components/ServerControls';
 import Ping from './components/Ping';
 import ServerPage from './pages/ServerPage';
 import WorldsPage from './pages/WorldsPage';
+import ModsPage from './pages/ModsPage';
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -50,6 +51,7 @@ function App() {
             <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
             <Route path="server" element={<AdminRoute><ServerPage /></AdminRoute>} />
             <Route path="worlds" element={<AdminRoute><WorldsPage /></AdminRoute>} />
+            <Route path="mods" element={<AdminRoute><ModsPage /></AdminRoute>} />
 
             {/* Shared Routes */}
             <Route path="map" element={<MapFrame />} />
