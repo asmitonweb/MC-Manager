@@ -1,5 +1,7 @@
 # Deployment Instructions for Azure Ubuntu VM
 
+> The active host is Windows. Use `..\WINDOWS_SETUP.md` and `..\tray\README.md` for the current deployment. The instructions below describe the original Azure/Linux deployment and are retained for reference.
+
 ## Prerequisites
 1.  **Azure VM**: Ubuntu 20.04 or 22.04 LTS.
 2.  **SSH Access**: You must be able to SSH into your VM.
@@ -86,4 +88,3 @@ sudo certbot --nginx -d YOUR_DOMAIN_HERE
 ## Step 9: Access
 -   **Web UI**: `https://<YOUR_DOMAIN>` (Secure HTTPS)
 -   **Minecraft**: `<YOUR_DOMAIN>:25565`
-

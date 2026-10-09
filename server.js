@@ -6,31 +6,90 @@ const { spawn } = require('child_process');
 const si = require('systeminformation');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 require('dotenv').config();
 
+const PORT = Number.parseInt(process.env.PORT || '3000', 10);
+const HOST = process.env.HOST || '127.0.0.1';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const USER_PASSWORD = process.env.USER_PASSWORD || '';
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+const SUPERVISOR_TOKEN = process.env.SUPERVISOR_TOKEN || '';
+const RCON_HOST = process.env.RCON_HOST || '';
+const RCON_PORT = Number.parseInt(process.env.RCON_PORT || '25575', 10);
+const RCON_PASSWORD = process.env.RCON_PASSWORD || '';
+const MINECRAFT_SERVER_DIR = path.resolve(
+    process.env.MC_SERVER_DIR || path.join(__dirname, '..', 'server')
+);
+const MINECRAFT_SERVER_JAR = process.env.MC_SERVER_JAR || 'fabric-server.jar';
+const MINECRAFT_SERVER_PROPERTIES = process.env.MC_SERVER_PROPERTIES || 'server.properties';
+const JAVA_BIN = process.env.JAVA_BIN || (
+    process.env.JAVA_HOME
+        ? path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java')
+        : 'java'
+);
+const MC_MIN_MEMORY = process.env.MC_MIN_MEMORY || '2G';
+const MC_MAX_MEMORY = process.env.MC_MAX_MEMORY || '6G';
+const MAP_TARGET = process.env.MAP_TARGET || 'http://127.0.0.1:8100';
+const CORS_ORIGIN = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
+    : false;
+
+const getMinecraftConfiguration = () => {
+    const serverDir = path.resolve(MINECRAFT_SERVER_DIR);
+    const jarPath = path.isAbsolute(MINECRAFT_SERVER_JAR)
+        ? path.resolve(MINECRAFT_SERVER_JAR)
+        : path.join(serverDir, MINECRAFT_SERVER_JAR);
+    const propertiesPath = path.isAbsolute(MINECRAFT_SERVER_PROPERTIES)
+        ? path.resolve(MINECRAFT_SERVER_PROPERTIES)
+        : path.join(serverDir, MINECRAFT_SERVER_PROPERTIES);
+
+    return {
+        serverDir,
+        jarPath,
+        propertiesPath,
+        serverDirectoryExists: fs.existsSync(serverDir),
+        jarExists: fs.existsSync(jarPath),
+        propertiesExists: fs.existsSync(propertiesPath),
+    };
+};
+
+const isMinecraftReady = () => {
+    const config = getMinecraftConfiguration();
+    return config.serverDirectoryExists && config.jarExists;
+};
+
+const isConfiguredSecret = (value) => Boolean(value && !value.startsWith('replace-with-'));
+const AUTH_CONFIGURED = Boolean(
+    isConfiguredSecret(ADMIN_PASSWORD) &&
+    isConfiguredSecret(USER_PASSWORD) &&
+    isConfiguredSecret(process.env.SESSION_SECRET)
+);
+const SUPERVISOR_CONFIGURED = isConfiguredSecret(SUPERVISOR_TOKEN);
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "*", // Allow Vite dev server
+        origin: CORS_ORIGIN,
         methods: ["GET", "POST"],
         credentials: true
     }
 });
 
-const PORT = process.env.PORT || 3000;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'password';
-const USER_PASSWORD = process.env.USER_PASSWORD || 'user123';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'secret';
-
 // Global State
-let serverStatus = 'OFFLINE';
+let serverStatus = isMinecraftReady() ? 'OFFLINE' : 'UNCONFIGURED';
 let logBuffer = [];
 let mcProcess = null;
 let rconClient = null;
+let rconRetryTimer = null;
+
+if (!AUTH_CONFIGURED) {
+    console.warn('Authentication is not configured. Copy .env.example to .env and set the required secrets.');
+}
 
 // Global Error Handling to prevent crashes
 process.on('uncaughtException', (err) => {
@@ -72,6 +131,10 @@ const requireAdmin = (req, res, next) => {
 
 // Login Route
 app.post('/api/login', (req, res) => {
+    if (!AUTH_CONFIGURED) {
+        return res.status(503).json({ error: 'Manager authentication is not configured' });
+    }
+
     const { password } = req.body;
     if (password === ADMIN_PASSWORD) {
         const token = jwt.sign({ role: 'admin' }, SESSION_SECRET, { expiresIn: '24h' });
@@ -113,7 +176,7 @@ app.use('/map', (req, res, next) => {
         res.status(401).send('Unauthorized');
     }
 }, createProxyMiddleware({
-    target: 'http://localhost:8100',
+    target: MAP_TARGET,
     changeOrigin: true,
     pathRewrite: {
         '^/map': '',
@@ -122,11 +185,19 @@ app.use('/map', (req, res, next) => {
 }));
 
 // Properties API
-const PROPERTIES_FILE = path.join(__dirname, '../server/server.properties');
+const getPropertiesFile = () => getMinecraftConfiguration().propertiesPath;
 
 app.get('/api/properties', requireAuth, requireAdmin, (req, res) => {
     try {
-        const content = fs.readFileSync(PROPERTIES_FILE, 'utf8');
+        const propertiesFile = getPropertiesFile();
+        if (!fs.existsSync(propertiesFile)) {
+            return res.status(404).json({
+                error: 'Minecraft server properties are not configured',
+                code: 'MINECRAFT_NOT_CONFIGURED'
+            });
+        }
+
+        const content = fs.readFileSync(propertiesFile, 'utf8');
         const properties = {};
         content.split('\n').forEach(line => {
             line = line.trim();
@@ -145,8 +216,16 @@ app.get('/api/properties', requireAuth, requireAdmin, (req, res) => {
 
 app.post('/api/properties', requireAuth, requireAdmin, (req, res) => {
     try {
+        const propertiesFile = getPropertiesFile();
+        if (!fs.existsSync(propertiesFile)) {
+            return res.status(404).json({
+                error: 'Minecraft server properties are not configured',
+                code: 'MINECRAFT_NOT_CONFIGURED'
+            });
+        }
+
         const newProps = req.body;
-        let content = fs.readFileSync(PROPERTIES_FILE, 'utf8');
+        let content = fs.readFileSync(propertiesFile, 'utf8');
         const lines = content.split('\n');
         const newLines = [];
         const processedKeys = new Set();
@@ -175,7 +254,7 @@ app.post('/api/properties', requireAuth, requireAdmin, (req, res) => {
             }
         });
 
-        fs.writeFileSync(PROPERTIES_FILE, newLines.join('\n'));
+        fs.writeFileSync(propertiesFile, newLines.join('\n'));
         res.json({ success: true });
     } catch (e) {
         console.error(e);
@@ -185,12 +264,14 @@ app.post('/api/properties', requireAuth, requireAdmin, (req, res) => {
 
 // Status API
 app.get('/api/status', (req, res) => {
-    // We don't require auth for this simple status check for the tray app
-    // But we should probably secure it in a real prod env. 
-    // For localhost usage, it's acceptable.
+    const configuration = getMinecraftConfiguration();
+
     res.json({
         status: serverStatus,
         service: 'RUNNING',
+        manager: 'RUNNING',
+        minecraftConfigured: configuration.serverDirectoryExists && configuration.jarExists,
+        propertiesConfigured: configuration.propertiesExists,
         players: Object.values(playerHistory).filter(p => p.online).length
     });
 });
@@ -198,6 +279,17 @@ app.get('/api/status', (req, res) => {
 // Simple HTTP Ping
 app.get('/api/ping', (req, res) => {
     res.send('pong');
+});
+
+app.get('/api/health', (req, res) => {
+    const configuration = getMinecraftConfiguration();
+    res.json({
+        ok: true,
+        manager: 'RUNNING',
+        minecraft: serverStatus,
+        minecraftConfigured: configuration.serverDirectoryExists && configuration.jarExists,
+        propertiesConfigured: configuration.propertiesExists,
+    });
 });
 
 const broadcastStatus = (newStatus) => {
@@ -211,7 +303,14 @@ const addToLogBuffer = (line) => {
 };
 
 const startServer = async () => {
-    if (mcProcess) return;
+    if (mcProcess && !mcProcess.killed) return;
+
+    const configuration = getMinecraftConfiguration();
+    if (!configuration.serverDirectoryExists || !configuration.jarExists) {
+        broadcastStatus('UNCONFIGURED');
+        io.emit('start_error', 'Minecraft is not configured. Add the server directory and configured server JAR first.');
+        return;
+    }
 
     try {
         const mem = await si.mem();
@@ -232,14 +331,28 @@ const startServer = async () => {
         io.to('admin_room').emit('log', startMsg);
         addToLogBuffer(startMsg);
 
-        // Path to the server folder
-        const serverDir = path.join(__dirname, '../server');
         const startTime = Date.now();
 
-        mcProcess = spawn('java', ['-Xms2G', '-Xmx6G', '-jar', 'fabric-server.jar', 'nogui'], {
-            cwd: serverDir,
-            shell: true
+        mcProcess = spawn(JAVA_BIN, [
+            `-Xms${MC_MIN_MEMORY}`,
+            `-Xmx${MC_MAX_MEMORY}`,
+            '-jar',
+            configuration.jarPath,
+            'nogui'
+        ], {
+            cwd: configuration.serverDir,
+            shell: false,
+            windowsHide: true
         });
+
+        const forwardOutput = (chunk) => {
+            const text = chunk.toString();
+            addToLogBuffer(text);
+            io.to('admin_room').emit('log', text);
+        };
+
+        if (mcProcess.stdout) mcProcess.stdout.on('data', forwardOutput);
+        if (mcProcess.stderr) mcProcess.stderr.on('data', forwardOutput);
 
         mcProcess.on('error', (err) => {
             console.error('Failed to start server process:', err);
@@ -254,12 +367,17 @@ const startServer = async () => {
             const exitMsg = `Minecraft server exited with code ${code}\n`;
             io.to('admin_room').emit('log', exitMsg);
             addToLogBuffer(exitMsg);
-            broadcastStatus('OFFLINE');
+            broadcastStatus(isMinecraftReady() ? 'OFFLINE' : 'UNCONFIGURED');
             mcProcess = null;
 
             if (rconClient) {
                 rconClient.end();
                 rconClient = null;
+            }
+
+            if (rconRetryTimer) {
+                clearTimeout(rconRetryTimer);
+                rconRetryTimer = null;
             }
 
             // Detect immediate crash (less than 10 seconds)
@@ -277,33 +395,116 @@ const startServer = async () => {
 };
 
 const connectRcon = async () => {
+    if (!RCON_HOST || !RCON_PORT || !RCON_PASSWORD || !mcProcess) return;
+
     try {
         if (rconClient) return;
         rconClient = await Rcon.connect({
-            host: process.env.RCON_HOST,
-            port: parseInt(process.env.RCON_PORT),
-            password: process.env.RCON_PASSWORD
+            host: RCON_HOST,
+            port: RCON_PORT,
+            password: RCON_PASSWORD
         });
         const rconMsg = 'RCON Connected\n';
         io.to('admin_room').emit('log', rconMsg);
         addToLogBuffer(rconMsg);
     } catch (error) {
         console.error('RCON Connection Error:', error.message);
-        setTimeout(connectRcon, 5000);
+        if (mcProcess) {
+            rconRetryTimer = setTimeout(connectRcon, 5000);
+        }
+    }
+};
+
+const waitForMinecraftExit = (processToWaitFor, timeoutMs = 10000) => new Promise((resolve) => {
+    if (!processToWaitFor || processToWaitFor.exitCode !== null) {
+        resolve();
+        return;
+    }
+
+    let settled = false;
+    const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve();
+    };
+
+    const timeout = setTimeout(finish, timeoutMs);
+    processToWaitFor.once('close', finish);
+});
+
+const forceStopMinecraft = (processToStop) => {
+    if (!processToStop || processToStop.exitCode !== null) return;
+
+    if (process.platform === 'win32') {
+        const killer = spawn('taskkill.exe', ['/PID', String(processToStop.pid), '/T', '/F'], {
+            windowsHide: true
+        });
+        killer.on('error', (error) => console.error('Failed to terminate Minecraft process tree:', error));
+    } else {
+        processToStop.kill('SIGTERM');
     }
 };
 
 const stopServer = async () => {
+    const processToStop = mcProcess;
+    if (!processToStop) {
+        broadcastStatus(isMinecraftReady() ? 'OFFLINE' : 'UNCONFIGURED');
+        return;
+    }
+
+    broadcastStatus('STOPPING');
+
     if (rconClient) {
         try {
             await rconClient.send('stop');
         } catch (e) {
             console.error('Error stopping via RCON:', e);
         }
-    } else if (mcProcess) {
-        mcProcess.kill();
+    }
+
+    await waitForMinecraftExit(processToStop, 10000);
+    if (mcProcess === processToStop && processToStop.exitCode === null) {
+        forceStopMinecraft(processToStop);
+        await waitForMinecraftExit(processToStop, 5000);
     }
 };
+
+let shutdownInProgress = false;
+const shutdownManager = async () => {
+    if (shutdownInProgress) return;
+    shutdownInProgress = true;
+
+    try {
+        await stopServer();
+    } catch (error) {
+        console.error('Error stopping Minecraft during manager shutdown:', error);
+    }
+
+    if (rconClient) {
+        try {
+            await rconClient.end();
+        } catch (error) {
+            console.error('Error closing RCON:', error);
+        }
+        rconClient = null;
+    }
+
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+};
+
+app.post('/api/supervisor/shutdown', (req, res) => {
+    if (!SUPERVISOR_CONFIGURED || req.get('x-manager-supervisor-token') !== SUPERVISOR_TOKEN) {
+        return res.status(401).json({ error: 'Supervisor authentication failed' });
+    }
+
+    res.json({ accepted: true });
+    shutdownManager();
+});
+
+process.once('SIGINT', shutdownManager);
+process.once('SIGTERM', shutdownManager);
 
 // Socket.IO
 // Player Persistence
@@ -560,8 +761,8 @@ app.get('*', (req, res) => {
 });
 
 // Start Server
-server.listen(PORT, () => {
-    console.log(`MC Manager running on http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+    console.log(`MC Manager running on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
     // Do NOT auto-start Minecraft on launch for now, let user control it
     // startServer(); 
 });

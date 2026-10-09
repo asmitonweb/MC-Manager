@@ -5,7 +5,9 @@
     "main": "server.js",
     "scripts": {
         "start": "node server.js",
+        "start:windows": "node server.js",
         "dev": "nodemon server.js",
+        "build:client": "npm --prefix client run build",
         "start:linux": "NODE_ENV=production node server.js"
     },
     "dependencies": {

@@ -2,3 +2,7 @@ node_modules
 .env
 client/dist
 players.json
+client/node_modules
+manager-data/
+*.zip
+*.log

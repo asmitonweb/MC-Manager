@@ -20,13 +20,21 @@ import {
 const Dashboard = () => {
     const { user, logout } = useAuth();
     const location = useLocation();
-    const [serverStatus, setServerStatus] = useState('ONLINE'); // Placeholder
+    const [serverStatus, setServerStatus] = useState('UNCONFIGURED');
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [errorMsg, setErrorMsg] = useState(null);
 
     // Listen for global errors (like start failure)
     React.useEffect(() => {
+        fetch('/api/status')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status) setServerStatus(data.status);
+            })
+            .catch(() => setServerStatus('OFFLINE'));
+
         const socket = io('/', { withCredentials: true });
+        socket.on('status', (status) => setServerStatus(status));
         socket.on('start_error', (msg) => {
             setErrorMsg(msg);
             setTimeout(() => setErrorMsg(null), 10000); // Clear after 10s
@@ -114,9 +122,9 @@ const Dashboard = () => {
                     <div className="bg-slate-950 rounded-lg p-4 mb-4 border border-slate-800">
                         <div className="flex items-center justify-between mb-2">
                             <span className="text-xs text-slate-500 uppercase tracking-wider">System Status</span>
-                            <Activity className="w-4 h-4 text-green-500" />
+                             <Activity className={`w-4 h-4 ${serverStatus === 'ONLINE' ? 'text-green-500' : serverStatus === 'UNCONFIGURED' ? 'text-yellow-500' : 'text-slate-500'}`} />
                         </div>
-                        <div className="text-sm font-mono text-green-400">
+                        <div className={`text-sm font-mono ${serverStatus === 'ONLINE' ? 'text-green-400' : serverStatus === 'UNCONFIGURED' ? 'text-yellow-400' : 'text-slate-400'}`}>
                             {serverStatus}
                         </div>
                     </div>
@@ -138,8 +146,8 @@ const Dashboard = () => {
                         {navItems.find(i => i.path === location.pathname)?.label || 'Dashboard'}
                     </h2>
                     <div className="flex items-center gap-4">
-                        <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
-                        <span className="text-xs text-slate-500 font-mono">SECURE CONNECTION ESTABLISHED</span>
+                         <div className={`h-2 w-2 rounded-full ${serverStatus === 'ONLINE' ? 'bg-green-500 animate-pulse' : serverStatus === 'UNCONFIGURED' ? 'bg-yellow-500' : 'bg-slate-500'}`}></div>
+                         <span className="text-xs text-slate-500 font-mono">MANAGER CONNECTION ESTABLISHED</span>
                     </div>
                 </header>
 

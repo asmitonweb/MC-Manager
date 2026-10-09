@@ -4,7 +4,7 @@ import { Power, RotateCw, Square } from 'lucide-react';
 
 const ServerControls = () => {
     const [socket, setSocket] = useState(null);
-    const [status, setStatus] = useState('OFFLINE');
+    const [status, setStatus] = useState('UNCONFIGURED');
     const [message, setMessage] = useState('');
     const [countdown, setCountdown] = useState(null);
 
@@ -19,6 +19,12 @@ const ServerControls = () => {
         } else if (newStatus === 'STARTING') {
             setMessage('Server is starting...');
             setCountdown(60);
+        } else if (newStatus === 'STOPPING') {
+            setMessage('Server is stopping...');
+            setCountdown(null);
+        } else if (newStatus === 'UNCONFIGURED') {
+            setMessage('Minecraft is not configured yet. Add the server core before starting it.');
+            setCountdown(null);
         }
     };
 
@@ -84,8 +90,8 @@ const ServerControls = () => {
 
                 <button
                     onClick={() => handleAction('restart')}
-                    disabled={status === 'OFFLINE'}
-                    className={`flex flex-col items-center justify-center p-8 rounded-xl transition-all group ${status === 'OFFLINE'
+                    disabled={status === 'OFFLINE' || status === 'UNCONFIGURED'}
+                    className={`flex flex-col items-center justify-center p-8 rounded-xl transition-all group ${status === 'OFFLINE' || status === 'UNCONFIGURED'
                         ? 'bg-slate-800 border border-slate-700 opacity-50 cursor-not-allowed'
                         : 'bg-yellow-500/10 border border-yellow-500/20 hover:bg-yellow-500/20'
                         }`}
@@ -98,8 +104,8 @@ const ServerControls = () => {
 
                 <button
                     onClick={() => handleAction('stop')}
-                    disabled={status === 'OFFLINE'}
-                    className={`flex flex-col items-center justify-center p-8 rounded-xl transition-all group ${status === 'OFFLINE'
+                    disabled={status === 'OFFLINE' || status === 'UNCONFIGURED'}
+                    className={`flex flex-col items-center justify-center p-8 rounded-xl transition-all group ${status === 'OFFLINE' || status === 'UNCONFIGURED'
                         ? 'bg-slate-800 border border-slate-700 opacity-50 cursor-not-allowed'
                         : 'bg-red-500/10 border border-red-500/20 hover:bg-red-500/20'
                         }`}
@@ -114,8 +120,9 @@ const ServerControls = () => {
             <div className="mt-8 p-6 bg-slate-900 rounded-lg border border-slate-800 text-center">
                 <div className="text-xl font-mono font-bold text-white mb-2">
                     STATUS: <span className={
-                        status === 'ONLINE' ? 'text-green-400' :
-                            status === 'STARTING' ? 'text-yellow-400' : 'text-red-400'
+                            status === 'ONLINE' ? 'text-green-400' :
+                                status === 'STARTING' || status === 'STOPPING' ? 'text-yellow-400' :
+                                    status === 'UNCONFIGURED' ? 'text-yellow-400' : 'text-red-400'
                     }>{status}</span>
                 </div>
                 {message && (
