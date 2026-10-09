@@ -1,27 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { io } from 'socket.io-client';
 import { Terminal as TerminalIcon, Send } from 'lucide-react';
+import { useSocket } from '../context/SocketContext';
 
 const Console = () => {
-    const [logs, setLogs] = useState([]);
+    const { logs, emit } = useSocket();
     const [command, setCommand] = useState('');
-    const [socket, setSocket] = useState(null);
     const bottomRef = useRef(null);
-
-    useEffect(() => {
-        const newSocket = io('/', { withCredentials: true });
-        setSocket(newSocket);
-
-        newSocket.on('log', (msg) => {
-            setLogs(prev => [...prev, msg]);
-        });
-
-        newSocket.on('log_history', (history) => {
-            setLogs(history);
-        });
-
-        return () => newSocket.disconnect();
-    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -29,8 +13,8 @@ const Console = () => {
 
     const sendCommand = (e) => {
         e.preventDefault();
-        if (!command.trim() || !socket) return;
-        socket.emit('command', command);
+        if (!command.trim()) return;
+        emit('command', command);
         setCommand('');
     };
 
@@ -43,19 +27,19 @@ const Console = () => {
                 </div>
                 <div className="flex gap-2">
                     <button
-                        onClick={() => socket?.emit('start')}
+                        onClick={() => emit('start')}
                         className="px-3 py-1 bg-green-500/10 text-green-400 text-xs font-bold rounded hover:bg-green-500/20 border border-green-500/20 transition-colors uppercase tracking-wider"
                     >
                         Initialize
                     </button>
                     <button
-                        onClick={() => socket?.emit('restart')}
+                        onClick={() => emit('restart')}
                         className="px-3 py-1 bg-yellow-500/10 text-yellow-400 text-xs font-bold rounded hover:bg-yellow-500/20 border border-yellow-500/20 transition-colors uppercase tracking-wider"
                     >
                         Reboot
                     </button>
                     <button
-                        onClick={() => socket?.emit('stop')}
+                        onClick={() => emit('stop')}
                         className="px-3 py-1 bg-red-500/10 text-red-400 text-xs font-bold rounded hover:bg-red-500/20 border border-red-500/20 transition-colors uppercase tracking-wider"
                     >
                         Terminate

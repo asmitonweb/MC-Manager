@@ -1,23 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { io } from 'socket.io-client';
 import { MessageSquare, Send } from 'lucide-react';
+import { useSocket } from '../context/SocketContext';
 
 const Chat = () => {
-    const [messages, setMessages] = useState([]);
+    const { chat: messages, emit } = useSocket();
     const [input, setInput] = useState('');
-    const [socket, setSocket] = useState(null);
     const bottomRef = useRef(null);
-
-    useEffect(() => {
-        const newSocket = io('/', { withCredentials: true });
-        setSocket(newSocket);
-
-        newSocket.on('chat_message', (msg) => {
-            setMessages(prev => [...prev, msg]);
-        });
-
-        return () => newSocket.disconnect();
-    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -25,9 +13,9 @@ const Chat = () => {
 
     const sendMessage = (e) => {
         e.preventDefault();
-        if (!input.trim() || !socket) return;
+        if (!input.trim()) return;
         // Send to backend to broadcast via RCON/tellraw
-        socket.emit('chat_send', input);
+        emit('chat_send', input);
         setInput('');
     };
 

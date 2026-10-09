@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
 import {
     Terminal,
     Map as MapIcon,
@@ -20,27 +20,16 @@ import {
 const Dashboard = () => {
     const { user, logout } = useAuth();
     const location = useLocation();
-    const [serverStatus, setServerStatus] = useState('UNCONFIGURED');
+    const { status: serverStatus, connected, startError, clearStartError } = useSocket();
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-    const [errorMsg, setErrorMsg] = useState(null);
+    const errorMsg = startError?.message;
 
-    // Listen for global errors (like start failure)
-    React.useEffect(() => {
-        fetch('/api/status')
-            .then(res => res.json())
-            .then(data => {
-                if (data.status) setServerStatus(data.status);
-            })
-            .catch(() => setServerStatus('OFFLINE'));
-
-        const socket = io('/', { withCredentials: true });
-        socket.on('status', (status) => setServerStatus(status));
-        socket.on('start_error', (msg) => {
-            setErrorMsg(msg);
-            setTimeout(() => setErrorMsg(null), 10000); // Clear after 10s
-        });
-        return () => socket.disconnect();
-    }, []);
+    // Global errors (like start failure) clear after 10s
+    useEffect(() => {
+        if (!startError) return;
+        const timer = setTimeout(clearStartError, 10000);
+        return () => clearTimeout(timer);
+    }, [startError, clearStartError]);
 
     const allNavItems = [
         { path: '/', icon: Terminal, label: 'Console', roles: ['admin'] },
@@ -147,7 +136,7 @@ const Dashboard = () => {
                     </h2>
                     <div className="flex items-center gap-4">
                          <div className={`h-2 w-2 rounded-full ${serverStatus === 'ONLINE' ? 'bg-green-500 animate-pulse' : serverStatus === 'UNCONFIGURED' ? 'bg-yellow-500' : 'bg-slate-500'}`}></div>
-                         <span className="text-xs text-slate-500 font-mono">MANAGER CONNECTION ESTABLISHED</span>
+                         <span className="text-xs text-slate-500 font-mono">{connected ? 'MANAGER CONNECTION ESTABLISHED' : 'RECONNECTING TO MANAGER...'}</span>
                     </div>
                 </header>
 
@@ -165,7 +154,7 @@ const Dashboard = () => {
                             <h4 className="font-bold uppercase tracking-wider text-sm">System Error</h4>
                             <p className="font-mono text-sm">{errorMsg}</p>
                         </div>
-                        <button onClick={() => setErrorMsg(null)} className="ml-4 hover:text-red-200"><X className="w-5 h-5" /></button>
+                        <button onClick={clearStartError} className="ml-4 hover:text-red-200"><X className="w-5 h-5" /></button>
                     </div>
                 </div>
             )}
