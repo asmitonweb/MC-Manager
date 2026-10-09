@@ -21,6 +21,8 @@ const DiscordPage = () => {
                 gameAddress: data.gameAddress || data.suggested?.gameAddress || '',
                 inviteUrl: data.inviteUrl,
                 serverName: data.serverName,
+                postTitle: data.postTitle,
+                existingPost: '',
                 enabled: data.enabled || !data.webhookConfigured,
             });
         } catch (err) {
@@ -48,7 +50,7 @@ const DiscordPage = () => {
 
     const save = () => act(async () => {
         const saved = await api.put('/api/discord', form);
-        setForm({ ...form, webhookUrl: '' });
+        setForm({ ...form, webhookUrl: '', existingPost: '' });
         return saved;
     }, 'Saved. Discord updates within a few seconds.');
 
@@ -66,9 +68,9 @@ const DiscordPage = () => {
         <Panel title="Discord" icon={MessageCircle} className="h-full">
             <div className="space-y-5 max-w-3xl">
                 <p className="text-sm text-slate-400">
-                    MC Manager keeps two messages in one Discord channel up to date: a player guide (Tailscale, Fabric, mods, address) and a
-                    server card with status, world, mod list and a one-click mod download. When mods change it posts a short notice.
-                    Use a dedicated read-only channel and pin both messages.
+                    MC Manager keeps a player guide (Tailscale, Fabric, mods, address) and a server card (status, world, mod list,
+                    one-click mod download) up to date, and posts a short notice when mods change. In a forum channel it creates one
+                    post: the guide opens it and the card and notices live inside it. In a text channel, pin both messages.
                 </p>
                 {error && <Notice tone="error">{error}</Notice>}
                 {notice && <Notice tone="success">{notice}</Notice>}
@@ -90,7 +92,18 @@ const DiscordPage = () => {
                     <Field label="Tailscale invite link" hint="Optional. Tailscale admin console → Users → Invite.">
                         <input className={inputClass} placeholder="https://login.tailscale.com/..." {...field('inviteUrl')} />
                     </Field>
+                    <Field label="Forum post title" hint="Used when a new forum post is created.">
+                        <input className={inputClass} placeholder={`Minecraft — ${form.serverName || 'server'}`} {...field('postTitle')} />
+                    </Field>
+                    <Field label="Use an existing forum post" hint="Optional. Right-click a post → Copy Link.">
+                        <input className={inputClass} placeholder="https://discord.com/channels/.../..." {...field('existingPost')} />
+                    </Field>
                 </div>
+                {view.postUrl && (
+                    <p className="text-sm text-slate-400">
+                        Forum post: <a href={view.postUrl} target="_blank" rel="noreferrer" className="text-cyan-400 underline">open in Discord</a>
+                    </p>
+                )}
                 <label className="flex items-center gap-2 text-sm text-slate-300">
                     <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
                     Keep Discord in sync automatically

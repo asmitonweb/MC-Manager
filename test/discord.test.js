@@ -10,7 +10,7 @@ const { DiscordSync, WEBHOOK_PATTERN } = require('../lib/discord');
 
 const WEBHOOK = 'https://discord.com/api/webhooks/123/abc-DEF_1';
 
-const setup = () => {
+const setup = ({ forum = false } = {}) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcm-discord-'));
     const config = { DATA_DIR: path.join(root, 'data'), PORT: 3000 };
     const modsDir = path.join(root, 'mods');
@@ -34,19 +34,28 @@ const setup = () => {
     const requests = [];
     let nextId = 1;
     const deleted = new Set();
+    const deletedThreads = new Set();
+    const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
+    // Mimics a Discord webhook; in forum mode, posts need a thread_name or thread_id.
     const fetchImpl = async (url, options) => {
         const body = JSON.parse(options.body);
-        requests.push({ method: options.method, url, body });
+        const threadId = new URL(url).searchParams.get('thread_id');
+        requests.push({ method: options.method, url, body, threadId });
+        if (threadId && deletedThreads.has(threadId)) return json({ code: 10003, message: 'Unknown Channel' }, 404);
         const match = /\/messages\/(\d+)/.exec(url);
-        if (match && deleted.has(match[1])) return new Response('{}', { status: 404 });
+        if (match && deleted.has(match[1])) return json({ code: 10008, message: 'Unknown Message' }, 404);
+        if (forum && !match && !threadId && !body.thread_name) {
+            return json({ code: 220001, message: 'Webhooks posted to forum channels must have a thread_name or thread_id' }, 400);
+        }
         const id = match ? match[1] : String(nextId++);
-        return new Response(JSON.stringify({ id }), { headers: { 'content-type': 'application/json' } });
+        const channelId = body.thread_name ? `thread-${id}` : threadId || 'channel';
+        return json({ id, channel_id: channelId, guild_id: 'guild' });
     };
     const minecraft = { status: 'ONLINE' };
     const players = { count: () => 2 };
     const worlds = { activeId: () => state.get().activeWorldId, list: () => state.get().worlds };
     const discord = new DiscordSync({ config, state, minecraft, worlds, players, modpack, fetchImpl });
-    return { root, state, modpack, discord, requests, addMod, deleted, minecraft, manifest };
+    return { root, state, modpack, discord, requests, addMod, deleted, deletedThreads, minecraft, manifest };
 };
 
 const zipEntries = (file) => new Promise((resolve, reject) => {
@@ -147,4 +156,58 @@ test('a deleted message is reposted', async () => {
     await discord.sync();
     assert.deepEqual(requests.map((r) => r.method), ['PATCH', 'POST']);
     assert.equal(discord.settings().statusMessageId, '3');
+});
+
+test('forum channels: the guide opens a new post and everything else goes into it', async () => {
+    const { discord, requests, addMod, minecraft } = setup({ forum: true });
+    addMod('aot', "Danny's AOT", '2.5.1.1', 'required');
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000', serverName: 'Closed Room' });
+    await discord.sync();
+    // A plain post is rejected (220001), so a titled post is created and the card goes into it.
+    assert.deepEqual(requests.map((r) => [r.method, Boolean(r.body.thread_name), r.threadId]), [
+        ['POST', false, null], ['POST', true, null], ['POST', false, 'thread-1'],
+    ]);
+    assert.equal(requests[1].body.thread_name, 'Minecraft — Closed Room');
+    const view = discord.publicView();
+    assert.equal(view.forum, true);
+    assert.equal(view.threadId, 'thread-1');
+    assert.equal(view.postUrl, 'https://discord.com/channels/guild/thread-1');
+
+    requests.length = 0;
+    minecraft.status = 'OFFLINE';
+    await discord.sync();
+    assert.deepEqual(requests.map((r) => [r.method, r.threadId]), [['PATCH', 'thread-1']]);
+
+    requests.length = 0;
+    addMod('geckolib', 'GeckoLib', '4.9.3', 'required');
+    await discord.sync();
+    const notice = requests.find((r) => r.body.content);
+    assert.equal(notice.threadId, 'thread-1');
+});
+
+test('forum channels: a deleted post is recreated', async () => {
+    const { discord, requests, addMod, deletedThreads } = setup({ forum: true });
+    addMod('aot', "Danny's AOT", '2.5.1.1', 'required');
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000' });
+    await discord.sync();
+    const oldThread = discord.publicView().threadId;
+    deletedThreads.add(oldThread);
+    requests.length = 0;
+    await discord.sync({ force: true });
+    assert.ok(requests.some((r) => r.body.thread_name), 'a new post was created');
+    const newThread = discord.publicView().threadId;
+    assert.notEqual(newThread, oldThread);
+    assert.equal(requests.at(-1).threadId, newThread);
+});
+
+test('an existing forum post can be reused from its link', async () => {
+    const { discord, requests, addMod } = setup({ forum: true });
+    addMod('aot', "Danny's AOT", '2.5.1.1', 'required');
+    await assert.rejects(discord.update({ existingPost: 'not a link' }), { code: 'INVALID_SETTING' });
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000', existingPost: 'https://discord.com/channels/111111111111111111/222222222222222222' });
+    await discord.sync();
+    assert.deepEqual(requests.map((r) => [r.method, r.threadId, Boolean(r.body.thread_name)]), [
+        ['POST', '222222222222222222', false], ['POST', '222222222222222222', false],
+    ]);
+    assert.equal(discord.publicView().postUrl, 'https://discord.com/channels/111111111111111111/222222222222222222');
 });
