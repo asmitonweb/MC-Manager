@@ -50,7 +50,9 @@ The `user` role can only start, stop and restart the server.
 
 The dashboard listens on `HOST=0.0.0.0`. `tray\setup-dashboard-firewall.ps1` allows TCP 3000 only from the Tailscale range (`100.64.0.0/10`). From another Tailscale device, open `http://<tailscale-ip>:3000`.
 
-The installer enables RCON with a generated password; the manager uses it on `127.0.0.1`. Do not open the RCON port (25575) in the firewall.
+To let Tailscale players join, run `tray\setup-minecraft-firewall.ps1` from an elevated PowerShell window. It allows TCP 25565 for the server's java.exe from `100.64.0.0/10` only, and blocks the RCON port (25575) for every remote host; the manager reaches RCON over `127.0.0.1`, which is unaffected. Players connect to `<tailscale-ip>:25565`.
+
+The installer enables RCON with a generated password. Never open the RCON port.
 
 ## Deploying changes from another machine
 
