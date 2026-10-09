@@ -15,6 +15,7 @@ const { Metrics } = require('./lib/metrics');
 const { PlayerTracker } = require('./lib/players');
 const { WorldManager } = require('./lib/worlds');
 const { ServerInstaller } = require('./lib/installer');
+const { BackupManager } = require('./lib/backups');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
 
@@ -33,6 +34,7 @@ const players = new PlayerTracker({
 const metrics = new Metrics({ getMinecraftPid: () => minecraft.process?.pid });
 const worlds = new WorldManager({ config, state, minecraft });
 const installer = new ServerInstaller({ config, state, minecraft, operations, worlds });
+const backups = new BackupManager({ config, state, minecraft, worlds, operations });
 const auth = createAuth(config.SESSION_SECRET);
 
 try {
@@ -86,9 +88,11 @@ const shutdownManager = async () => {
     setTimeout(() => process.exit(0), 3000).unref();
 };
 
-const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, io, shutdownManager };
+const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, io, shutdownManager };
 app.use('/api', require('./routes/core')(routeDeps));
 app.use('/api/server', require('./routes/server-install')(routeDeps));
+app.use('/api/worlds', require('./routes/worlds')(routeDeps));
+app.use('/api/backups', require('./routes/backups')(routeDeps));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

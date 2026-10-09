@@ -189,7 +189,7 @@ const main = async () => {
     }
 };
 
-main().catch((error) => {
+main().then(() => process.exit(0), (error) => {
     console.error('E2E FAILED:', error.message);
-    process.exitCode = 1;
+    process.exit(1);
 });
