@@ -86,7 +86,7 @@ test('settings are validated and the webhook is never returned in full', async (
     await assert.rejects(discord.update({ baseUrl: 'not a url' }), { code: 'INVALID_SETTING' });
     const view = await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://100.64.0.10:3000', gameAddress: '100.64.0.10:25565' });
     assert.ok(!view.webhookUrl.includes('abc-DEF'));
-    assert.match(view.packUrl, /^http:\/\/100\.83\.163\.42:3000\/pack\/[0-9a-f]{32}\/mods-fabric-1\.21\.1\.zip$/);
+    assert.match(view.packUrl, /^http:\/\/100.64.0.10:3000\/pack\/[0-9a-f]{32}\/mods-fabric-1\.21\.1\.zip$/);
     assert.equal(discord.isValidToken(view.packUrl.split('/')[4]), true);
     assert.equal(discord.isValidToken('0'.repeat(32)), false);
     const old = view.packUrl;
