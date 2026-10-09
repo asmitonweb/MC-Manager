@@ -139,6 +139,19 @@ const main = async () => {
                 await sleep(500);
             }
         }
+        // The user role must not reach admin APIs.
+        const userLogin = await fetch(`${BASE}/api/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ password: 'e2e-user' }),
+        });
+        const userCookie = userLogin.headers.get('set-cookie').split(';')[0];
+        for (const url of ['/api/worlds', '/api/backups', '/api/addons/providers', '/api/server/install/options', '/api/properties', '/api/jobs']) {
+            const res = await fetch(BASE + url, { headers: { cookie: userCookie } });
+            if (res.status !== 403) throw new Error(`user role got ${res.status} for ${url}`);
+        }
+        log('User role is refused by admin APIs (403)');
+
         await api('POST', '/api/login', { password: ADMIN });
 
         const versions = await api('GET', `/api/server/install/versions?loader=${loader}`);

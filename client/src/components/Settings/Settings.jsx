@@ -43,7 +43,7 @@ const Settings = () => {
             } else {
                 setMessage({ type: 'error', text: 'Failed to save settings.' });
             }
-        } catch (e) {
+        } catch {
             setMessage({ type: 'error', text: 'Error saving settings.' });
         } finally {
             setSaving(false);

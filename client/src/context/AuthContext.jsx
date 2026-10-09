@@ -19,7 +19,7 @@ export const AuthProvider = ({ children }) => {
             } else {
                 setUser(null);
             }
-        } catch (e) {
+        } catch {
             setUser(null);
         } finally {
             setLoading(false);
@@ -52,4 +52,5 @@ export const AuthProvider = ({ children }) => {
     );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

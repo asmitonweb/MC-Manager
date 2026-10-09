@@ -2,7 +2,13 @@
 
 This is a lightweight Windows PowerShell/WinForms tray controller for the Node-based MC Manager.
 
-The tray uses the project logo from `mc-manager\client\public\favicon.png`, converted to `tray\mc-manager.ico`.
+The tray shows a creeper icon (`tray\mc-manager.ico`) and reports the manager's state in its tooltip, e.g. `MC Manager - Running - Minecraft ONLINE`. Regenerate the icon (and the dashboard favicon) with:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File 'E:\MC PC - Sandbox\tray\build-icon.ps1' -FaviconPng 'E:\MC PC - Sandbox\mc-manager\client\public\favicon.png'
+```
+
+The manager writes `logs\manager.log` itself (rotated at 5 MB); the tray writes `logs\manager-tray.log`.
 
 ## Behavior
 
