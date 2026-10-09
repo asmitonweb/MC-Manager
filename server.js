@@ -13,6 +13,8 @@ const { Operations } = require('./lib/operations');
 const { MinecraftServer } = require('./lib/minecraft');
 const { Metrics } = require('./lib/metrics');
 const { PlayerTracker } = require('./lib/players');
+const { WorldManager } = require('./lib/worlds');
+const { ServerInstaller } = require('./lib/installer');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
 
@@ -29,7 +31,15 @@ const players = new PlayerTracker({
     legacyFile: path.join(__dirname, 'players.json'),
 });
 const metrics = new Metrics({ getMinecraftPid: () => minecraft.process?.pid });
+const worlds = new WorldManager({ config, state, minecraft });
+const installer = new ServerInstaller({ config, state, minecraft, operations, worlds });
 const auth = createAuth(config.SESSION_SECRET);
+
+try {
+    worlds.reconcile();
+} catch (error) {
+    console.error('World reconciliation failed:', error.message);
+}
 
 if (!config.AUTH_CONFIGURED) {
     console.warn('Authentication is not configured. Copy .env.example to .env and set the required secrets.');
@@ -76,8 +86,9 @@ const shutdownManager = async () => {
     setTimeout(() => process.exit(0), 3000).unref();
 };
 
-const routeDeps = { config, auth, state, minecraft, operations, players, io, shutdownManager };
+const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, io, shutdownManager };
 app.use('/api', require('./routes/core')(routeDeps));
+app.use('/api/server', require('./routes/server-install')(routeDeps));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -100,7 +111,11 @@ app.get('*', (req, res) => {
 minecraft.on('status', (status) => io.emit('status', status));
 minecraft.on('log', (text) => io.to(ADMIN_ROOM).emit('log', text));
 minecraft.on('start_error', (message) => io.emit('start_error', message));
+minecraft.on('status', (status) => {
+    if (status === 'ONLINE') worlds.touchActive();
+});
 minecraft.on('exit', () => {
+    worlds.touchActive();
     if (players.clearOnline()) io.to(ADMIN_ROOM).emit('player_list', players.snapshot());
 });
 operations.on('change', (operation) => io.emit('operation', operation));

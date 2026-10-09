@@ -50,6 +50,9 @@ const Settings = () => {
         }
     };
 
+    // Changed through the Worlds and Server pages instead.
+    const MANAGED_KEYS = ['level-name', 'level-seed', 'level-type', 'enable-rcon', 'rcon.port', 'rcon.password'];
+
     // Important keys to show at the top
     const PRIORITY_KEYS = ['server-port', 'max-players', 'view-distance', 'simulation-distance', 'difficulty', 'gamemode', 'level-name', 'motd', 'white-list', 'online-mode', 'pvp', 'allow-flight'];
 
@@ -105,7 +108,9 @@ const Settings = () => {
                                 type="text"
                                 value={properties[key]}
                                 onChange={(e) => handleChange(key, e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
+                                readOnly={MANAGED_KEYS.includes(key)}
+                                title={MANAGED_KEYS.includes(key) ? 'Managed by MC Manager (Worlds and Server pages)' : undefined}
+                                className="read-only:opacity-50 read-only:cursor-not-allowed w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
                             />
                         </div>
                     ))}

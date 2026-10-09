@@ -14,7 +14,8 @@ import {
     Power,
     Menu,
     X,
-    Wifi
+    Wifi,
+    HardDrive
 } from 'lucide-react';
 
 const Dashboard = () => {
@@ -39,6 +40,7 @@ const Dashboard = () => {
         { path: '/map', icon: MapIcon, label: 'Surveillance', roles: ['admin', 'user'] },
         { path: '/stats', icon: Activity, label: 'System', roles: ['admin'] },
         { path: '/ping', icon: Wifi, label: 'Ping', roles: ['admin', 'user'] },
+        { path: '/server', icon: HardDrive, label: 'Server', roles: ['admin'] },
         { path: '/settings', icon: SettingsIcon, label: 'Config', roles: ['admin'] },
     ];
 
