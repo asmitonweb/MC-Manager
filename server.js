@@ -7,6 +7,7 @@ const cookieParser = require('cookie-parser');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const config = require('./lib/config');
+require('./lib/logfile').attachLogFile(process.env.MANAGER_LOG_FILE);
 const { JsonStore } = require('./lib/store');
 const { createAuth, parseCookieHeader } = require('./lib/auth');
 const { Operations } = require('./lib/operations');

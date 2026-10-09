@@ -32,6 +32,7 @@ $script:ManagerProcess = $null
 $script:NotifyIcon = $null
 $script:StatusTimer = $null
 $script:LastState = ''
+$script:StopRequested = $false
 
 function Write-TrayLog {
     param([string]$Message)
@@ -67,17 +68,15 @@ function Set-TrayIconState {
 
     if (-not $script:NotifyIcon) { return }
 
-    $icon = switch ($State) {
-        'RUNNING' { [System.Drawing.SystemIcons]::Information; break }
-        'STARTING' { [System.Drawing.SystemIcons]::Warning; break }
-        'STOPPING' { [System.Drawing.SystemIcons]::Warning; break }
-        'ERROR' { [System.Drawing.SystemIcons]::Error; break }
-        default { [System.Drawing.SystemIcons]::Application; break }
-    }
-
-    $script:NotifyIcon.Icon = $icon
-    $tooltip = if ($Detail) { "MC Manager: $State - $Detail" } else { "MC Manager: $State" }
+    # The creeper icon stays constant; state is shown in the tooltip.
+    $label = (Get-Culture).TextInfo.ToTitleCase($State.ToLowerInvariant())
+    $tooltip = if ($Detail) { "MC Manager - $label - $Detail" } else { "MC Manager - $label" }
     $script:NotifyIcon.Text = $tooltip.Substring(0, [Math]::Min($tooltip.Length, 63))
+
+    if ($State -eq 'STOPPED' -and ($script:LastState -eq 'RUNNING' -or $script:LastState -eq 'STARTING') -and -not $script:StopRequested) {
+        Show-TrayNotice 'MC Manager' 'The manager stopped unexpectedly. Check logs\manager.log.' ([System.Windows.Forms.ToolTipIcon]::Error)
+    }
+    if ($State -eq 'STOPPED') { $script:StopRequested = $false }
     $script:LastState = $State
 }
 
@@ -183,31 +182,13 @@ function Start-Manager {
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
         $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-        $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError = $true
+        # The manager writes its own log (PowerShell event handlers run on
+        # background threads without a runspace and silently drop output).
+        $startInfo.EnvironmentVariables['MANAGER_LOG_FILE'] = $managerLog
 
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $startInfo
-        $process.EnableRaisingEvents = $true
-        $process.add_OutputDataReceived({
-            param($sender, $eventArgs)
-            if ($eventArgs.Data) {
-                Add-Content -LiteralPath $managerLog -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $($eventArgs.Data)"
-            }
-        })
-        $process.add_ErrorDataReceived({
-            param($sender, $eventArgs)
-            if ($eventArgs.Data) {
-                Add-Content -LiteralPath $managerLog -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] ERROR $($eventArgs.Data)"
-            }
-        })
-        $process.add_Exited({
-            Write-TrayLog "Manager process exited with code $($sender.ExitCode)."
-        })
-
         [void]$process.Start()
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
         $script:ManagerProcess = $process
         Set-TrayIconState 'STARTING'
         Show-TrayNotice 'MC Manager' 'Manager startup requested.'
@@ -225,6 +206,7 @@ function Stop-Manager {
         return
     }
 
+    $script:StopRequested = $true
     Set-TrayIconState 'STOPPING'
     $token = Get-EnvValue 'SUPERVISOR_TOKEN'
     $shutdownRequested = $false
@@ -295,11 +277,12 @@ function Exit-Tray {
 $script:NotifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $script:NotifyIcon.Visible = $true
 $script:NotifyIcon.Icon = if (Test-Path -LiteralPath $script:IconPath) {
-    New-Object System.Drawing.Icon($script:IconPath)
+    # Pick the frame that matches the tray size at the current DPI.
+    New-Object System.Drawing.Icon($script:IconPath, [System.Windows.Forms.SystemInformation]::SmallIconSize)
 } else {
     [System.Drawing.SystemIcons]::Application
 }
-$script:NotifyIcon.Text = 'MC Manager: STOPPED'
+$script:NotifyIcon.Text = 'MC Manager - Stopped'
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $startItem = $menu.Items.Add('Start Manager')
