@@ -84,7 +84,7 @@ test('settings are validated and the webhook is never returned in full', async (
     const { discord } = setup();
     await assert.rejects(discord.update({ webhookUrl: 'https://example.com/hook' }), { code: 'INVALID_WEBHOOK' });
     await assert.rejects(discord.update({ baseUrl: 'not a url' }), { code: 'INVALID_SETTING' });
-    const view = await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://100.83.163.42:3000', gameAddress: '100.83.163.42:25565' });
+    const view = await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://100.64.0.10:3000', gameAddress: '100.64.0.10:25565' });
     assert.ok(!view.webhookUrl.includes('abc-DEF'));
     assert.match(view.packUrl, /^http:\/\/100\.83\.163\.42:3000\/pack\/[0-9a-f]{32}\/mods-fabric-1\.21\.1\.zip$/);
     assert.equal(discord.isValidToken(view.packUrl.split('/')[4]), true);
@@ -96,7 +96,7 @@ test('settings are validated and the webhook is never returned in full', async (
 test('sync posts the guide then the status card, edits in place, and skips unchanged content', async () => {
     const { discord, requests, addMod, minecraft } = setup();
     addMod('aot', "Danny's AOT", '2.5.1.1', 'required');
-    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://100.83.163.42:3000', gameAddress: '100.83.163.42:25565', serverName: 'Closed Room' });
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://100.64.0.10:3000', gameAddress: '100.64.0.10:25565', serverName: 'Closed Room' });
 
     await discord.sync();
     assert.deepEqual(requests.map((r) => r.method), ['POST', 'POST']);
