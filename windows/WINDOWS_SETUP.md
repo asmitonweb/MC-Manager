@@ -32,10 +32,15 @@ E:\MC PC - Sandbox\
    ```powershell
    & 'E:\MC PC - Sandbox\tray\start-tray.cmd'
    ```
-5. After confirming the tray works, install its login startup entry:
+5. After confirming the tray works, install the startup entry and the one-click shortcut:
    ```powershell
    powershell.exe -ExecutionPolicy Bypass -File 'E:\MC PC - Sandbox\tray\install-startup.ps1'
    ```
+   - At Windows logon, the tray starts and starts the manager.
+   - **MC Manager** on the Desktop and in the Start Menu starts everything and opens the dashboard. If it is already running, it just opens the dashboard.
+   - To have Minecraft start with the manager, tick **Start Minecraft automatically** on the Server page.
+   - After a reboot this needs a logged-in user. Enable Windows automatic sign-in if the PC should come back on its own.
+   - `remove-startup.ps1` undoes all of this.
 
 ## Using the dashboard (admin)
 
