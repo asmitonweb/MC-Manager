@@ -54,6 +54,7 @@ module.exports = async ({ api, socket, log, waitForJob, startAndCheck, stopAndCh
     if (leftover.length) throw new Error(`orphaned dependencies left: ${leftover.map((d) => d.title)}`);
     if (!fs.existsSync(path.join(modsDir, 'e2e-unmanaged.jar'))) throw new Error('unmanaged file was removed');
     log(`  uninstalled ${withDeps.hit.title}; orphans removed; unmanaged file kept`);
+    fs.rmSync(path.join(modsDir, 'e2e-unmanaged.jar'));
 
     const updates = await api('GET', '/api/addons/updates');
     log(`  update check ok (${updates.length} available)`);
