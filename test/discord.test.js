@@ -233,8 +233,9 @@ test('with client sync, the guide links the one-click setup and notices name the
     assert.ok(guide.includes(`(http://100.64.0.10:3000/client/${token}/ClosedRoom-Setup.cmd)`));
     assert.ok(guide.includes(`iwr http://100.64.0.10:3000/client/${token}/ClosedRoom-Setup.cmd`));
     assert.match(guide, /pick \*\*Closed Room · Attack on Titan\*\*/);
-    assert.ok(requests[1].body.embeds[0].description.startsWith('**Setup (once):** Win + R'));
-    assert.ok(guide.indexOf('Win + R') < guide.indexOf('[⬇️'), 'command comes before the file link');
+    assert.ok(requests[1].body.embeds[0].description.startsWith('**Setup (once):** paste in Terminal'));
+    assert.ok(guide.indexOf('Terminal') < guide.indexOf('[⬇️'), 'command comes before the file link');
+    assert.ok(!guide.includes('Win + R'));
 
     requests.length = 0;
     addMod('geckolib', 'GeckoLib', '4.9.3', 'required');

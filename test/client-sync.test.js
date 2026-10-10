@@ -208,7 +208,7 @@ test('player endpoints need the token and serve the setup files', async () => {
         assert.ok(cmdText.includes('##MCM-SCRIPT\r\n# '), 'script embedded after the marker');
         assert.ok(cmdText.includes(`$Token = '${TOKEN}'`));
         assert.equal(ctx.clientSync.setupCommand('http://h:3000', TOKEN),
-            `powershell -c "iwr http://h:3000/client/${TOKEN}/ClosedRoom-Setup.cmd -UseBasicParsing -OutFile $env:TEMP\\ClosedRoom-Setup.cmd; & $env:TEMP\\ClosedRoom-Setup.cmd"`);
+            `$f="$env:TEMP\\ClosedRoom-Setup.cmd"; iwr http://h:3000/client/${TOKEN}/ClosedRoom-Setup.cmd -UseBasicParsing -OutFile $f; & $f`);
         assert.equal((await fetch(`${base}/client/${TOKEN}/file/fabric-1.21.1/mods/server-only.jar`)).status, 404);
         assert.equal(await (await fetch(`${base}/client/${TOKEN}/file/fabric-1.21.1/mods/aot.jar`)).text(), 'aot-jar');
     } finally {
