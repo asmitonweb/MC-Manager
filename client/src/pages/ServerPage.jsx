@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { HardDrive, ChevronLeft, ChevronRight, Download, RefreshCw, Save, Search } from 'lucide-react';
+import { HardDrive, ChevronLeft, ChevronRight, Download, RefreshCw, Save, Search, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { inputClass, formatDate } from '../lib/format';
 import { useSocket } from '../context/SocketContext';
@@ -73,7 +73,7 @@ const ProfileSummary = ({ options, onReinstall, onSaved }) => {
             <div className="flex flex-wrap gap-2">
                 <Button icon={Save} onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save settings'}</Button>
                 <Button variant="secondary" icon={RefreshCw} onClick={onReinstall} disabled={status !== 'OFFLINE'}>
-                    Reinstall / change version
+                    Reinstall this setup
                 </Button>
             </div>
             {status !== 'OFFLINE' && <p className="text-xs text-slate-500">Stop the server to reinstall it.</p>}
@@ -81,7 +81,7 @@ const ProfileSummary = ({ options, onReinstall, onSaved }) => {
     );
 };
 
-const Wizard = ({ options, reinstall, onCancel, onInstalled }) => {
+const Wizard = ({ options, reinstall, newSetup = false, onCancel, onInstalled }) => {
     const { status } = useSocket();
     const [step, setStep] = useState(0);
     const [loader, setLoader] = useState(options.profile?.loader || 'fabric');
@@ -133,7 +133,8 @@ const Wizard = ({ options, reinstall, onCancel, onInstalled }) => {
         javaPath: javaPath || undefined,
         memory,
         worldName,
-    }), [loader, mc, loaderVersion, javaPath, memory, worldName]);
+        newSetup,
+    }), [loader, mc, loaderVersion, javaPath, memory, worldName, newSetup]);
 
     const loadPreview = useCallback(async () => {
         setError(null);
@@ -160,7 +161,7 @@ const Wizard = ({ options, reinstall, onCancel, onInstalled }) => {
     const install = async () => {
         setError(null);
         try {
-            setJob(await api.post('/api/server/install', { ...request, acceptEula, acceptJavaRisk, reinstall }));
+            setJob(await api.post('/api/server/install', { ...request, acceptEula, acceptJavaRisk, reinstall: reinstall && !newSetup }));
         } catch (err) {
             setError(err.message);
         }
@@ -180,7 +181,13 @@ const Wizard = ({ options, reinstall, onCancel, onInstalled }) => {
 
     return (
         <div className="space-y-6 max-w-3xl">
-            {reinstall && (
+            {newSetup && (
+                <Notice tone="info">
+                    This adds a separate setup. The current one (with its mods and worlds) is kept and comes back automatically when
+                    you activate one of its worlds.
+                </Notice>
+            )}
+            {reinstall && !newSetup && (
                 <Notice tone="warn">
                     Reinstalling replaces the loader and libraries. Worlds, mods, config and server.properties are kept; the old
                     loader files are moved to backups\server-install. Mods built for another version or loader will stop working.
@@ -324,10 +331,52 @@ const Wizard = ({ options, reinstall, onCancel, onInstalled }) => {
     );
 };
 
+const SetupList = ({ setups, onAdd, onChanged }) => {
+    const { status } = useSocket();
+    const [error, setError] = useState(null);
+    const remove = async (id) => {
+        setError(null);
+        try {
+            await api.delete(`/api/setups/${id}`);
+            onChanged();
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+    return (
+        <div className="space-y-3 max-w-3xl mb-8">
+            <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-mono text-slate-500 uppercase">Setups (one per version; each world uses one)</div>
+                <Button variant="secondary" icon={Plus} onClick={onAdd} disabled={status !== 'OFFLINE'} title={status !== 'OFFLINE' ? 'Stop the server first' : undefined}>
+                    Add a setup for another version
+                </Button>
+            </div>
+            {error && <Notice tone="error">{error}</Notice>}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {setups.map((setup) => (
+                    <div key={setup.id} className={`bg-slate-950 border rounded-lg p-4 space-y-1 ${setup.active ? 'border-cyan-500/50' : 'border-slate-800'}`}>
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="font-bold text-white">{setup.loader === 'fabric' ? 'Fabric' : 'Forge'} · Minecraft {setup.minecraftVersion}</div>
+                            {setup.active
+                                ? <span className="px-2 py-0.5 rounded text-xs font-bold bg-cyan-500/20 text-cyan-300">ACTIVE</span>
+                                : !setup.worlds.length && <Button variant="ghost" icon={Trash2} title="Remove this unused setup" onClick={() => remove(setup.id)} />}
+                        </div>
+                        <div className="text-xs text-slate-400">Worlds: {setup.worlds.map((w) => w.name).join(', ') || '—'}</div>
+                        <div className="text-xs text-slate-400">Mods: {setup.mods.map((m) => m.title).join(', ') || 'none (vanilla clients can join)'}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 const ServerPage = () => {
     const [options, setOptions] = useState(null);
+    const [setups, setSetups] = useState([]);
     const [error, setError] = useState(null);
-    const [reinstalling, setReinstalling] = useState(false);
+    const [mode, setMode] = useState(null); // null | 'reinstall' | 'new'
+    const reinstalling = mode !== null;
+    const setReinstalling = (value) => setMode(value ? 'reinstall' : null);
 
     const load = useCallback(() => {
         api.get('/api/server/install/options')
@@ -336,6 +385,7 @@ const ServerPage = () => {
                 setError(null);
             })
             .catch((err) => setError(err.message));
+        api.get('/api/setups').then((data) => setSetups(data.setups)).catch(() => {});
     }, []);
 
     useEffect(() => {
@@ -348,9 +398,12 @@ const ServerPage = () => {
     }, [load]);
 
     return (
-        <Panel title={options?.profile && !reinstalling ? 'Server installation' : 'Install Minecraft server'} icon={HardDrive} className="h-full">
+        <Panel title={mode === 'new' ? 'Add a setup' : options?.profile && !reinstalling ? 'Server installation' : 'Install Minecraft server'} icon={HardDrive} className="h-full">
             {error && <Notice tone="error">{error}</Notice>}
             {!options && !error && <p className="text-slate-500">Loading...</p>}
+            {options && options.profile && !reinstalling && setups.length > 0 && (
+                <SetupList setups={setups} onAdd={() => setMode('new')} onChanged={load} />
+            )}
             {options && options.profile && !reinstalling && (
                 <ProfileSummary options={options} onReinstall={() => setReinstalling(true)} onSaved={load} />
             )}
@@ -358,6 +411,7 @@ const ServerPage = () => {
                 <Wizard
                     options={options}
                     reinstall={Boolean(options.profile || options.existingInstall)}
+                    newSetup={mode === 'new'}
                     onCancel={options.profile ? () => setReinstalling(false) : null}
                     onInstalled={onInstalled}
                 />

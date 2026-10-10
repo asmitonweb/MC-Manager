@@ -9,7 +9,7 @@ import { useSocket } from '../context/SocketContext';
 import { Panel, Button, Field, Notice, Modal } from '../components/ui';
 import JobProgress from '../components/JobProgress';
 
-const WORLD_JOB_KINDS = new Set(['backup', 'restore', 'world.import', 'world.duplicate', 'world.delete', 'install']);
+const WORLD_JOB_KINDS = new Set(['backup', 'restore', 'world.import', 'world.duplicate', 'world.delete', 'world.switch', 'install']);
 const KIND_STYLES = {
     manual: 'bg-cyan-500/10 text-cyan-300',
     'pre-restore': 'bg-yellow-500/10 text-yellow-300',
@@ -84,6 +84,7 @@ const BackupTable = ({ backups, showWorld, busy, onRestore, onVerify, onDelete }
 const WorldsPage = () => {
     const { status, operation, jobs } = useSocket();
     const [data, setData] = useState(null);
+    const [setups, setSetups] = useState([]);
     const [backups, setBackups] = useState([]);
     const [tab, setTab] = useState('worlds');
     const [error, setError] = useState(null);
@@ -99,8 +100,9 @@ const WorldsPage = () => {
 
     const load = useCallback(async () => {
         try {
-            const [worldData, backupList] = await Promise.all([api.get('/api/worlds'), api.get('/api/backups')]);
+            const [worldData, backupList, setupData] = await Promise.all([api.get('/api/worlds'), api.get('/api/backups'), api.get('/api/setups')]);
             setData(worldData);
+            setSetups(setupData.setups);
             setBackups(backupList);
             setError(null);
         } catch (err) {
@@ -122,19 +124,26 @@ const WorldsPage = () => {
         if (finishedKey) load();
     }, [finishedKey, load]);
 
-    const run = async (action, successMessage) => {
+    // retryConfirmed re-sends the request with confirmUpgrade after the admin agrees.
+    const run = async (action, successMessage, retryConfirmed) => {
         setError(null);
         setNotice(null);
         try {
             const result = await action();
             if (result?.id && result?.kind) setJobId(result.id);
-            if (successMessage) setNotice(successMessage);
+            else if (successMessage) setNotice(successMessage);
             setDialog(null);
             await load();
         } catch (err) {
-            setError(err.message);
+            if (err.code === 'UPGRADE_CONFIRMATION_REQUIRED' && retryConfirmed) {
+                setDialog({ type: 'upgrade', message: err.message, retry: () => run(retryConfirmed, successMessage) });
+            } else {
+                setError(err.message);
+            }
         }
     };
+
+    const setupLabel = (setup) => (setup ? `${setup.loader === 'fabric' ? 'Fabric' : 'Forge'} ${setup.minecraftVersion}` : 'no setup');
 
     const openDialog = (type, payload = {}, initialForm = {}) => {
         setForm(initialForm);
@@ -176,7 +185,7 @@ const WorldsPage = () => {
 
     const actions = (
         <>
-            <Button icon={Plus} onClick={() => openDialog('create', {}, { name: '', seed: '', levelType: 'default', setActive: false })} disabled={busy}>New</Button>
+            <Button icon={Plus} onClick={() => openDialog('create', {}, { name: '', seed: '', levelType: 'default', setActive: false, setupId: setups.find((setup) => setup.active)?.id || '' })} disabled={busy}>New</Button>
             <Button variant="secondary" icon={Upload} onClick={() => fileInput.current?.click()} disabled={busy}>Import .zip</Button>
             <input ref={fileInput} type="file" accept=".zip" className="hidden" onChange={importWorld} />
         </>
@@ -234,11 +243,21 @@ const WorldsPage = () => {
                                         <span>Backups: {worldBackups.length}</span>
                                         <span>Created: {new Date(world.createdAt).toLocaleDateString()}</span>
                                         <span>Played: {world.lastPlayedAt ? new Date(world.lastPlayedAt).toLocaleDateString() : '—'}</span>
+                                        <span className="col-span-2">
+                                            Runs on: <span className="text-cyan-300 font-mono">{setupLabel(world.setup)}</span>
+                                            {world.savedVersion && world.savedVersion !== world.setup?.minecraftVersion && (
+                                                <span className="text-yellow-300"> · saved with {world.savedVersion}</span>
+                                            )}
+                                        </span>
                                     </div>
                                     <div className="flex flex-wrap gap-1">
                                         {!world.active && (
                                             <Button icon={Play} disabled={!stopped || busy} title={stopped ? 'Make this the active world' : 'Stop the server first'}
-                                                onClick={() => run(() => api.post(`/api/worlds/${world.id}/activate`), `"${world.name}" is now the active world.`)}>
+                                                onClick={() => run(
+                                                    () => api.post(`/api/worlds/${world.id}/activate`),
+                                                    `"${world.name}" is now the active world.`,
+                                                    () => api.post(`/api/worlds/${world.id}/activate`, { confirmUpgrade: true }),
+                                                )}>
                                                 Activate
                                             </Button>
                                         )}
@@ -249,6 +268,12 @@ const WorldsPage = () => {
                                         <Button variant="secondary" disabled={!worldBackups.length} onClick={() => openDialog('backups', { world })}>
                                             Backups
                                         </Button>
+                                        {setups.length > 1 && (
+                                            <Button variant="secondary" disabled={busy || liveActive} title="Run this world on another version"
+                                                onClick={() => openDialog('version', { world }, { setupId: world.setup?.id || '' })}>
+                                                Version
+                                            </Button>
+                                        )}
                                         <Button variant="ghost" icon={Pencil} title="Rename" onClick={() => openDialog('rename', { world }, { name: world.name })} />
                                         <Button variant="ghost" icon={Copy} title="Duplicate" disabled={busy || liveActive || !world.generated}
                                             onClick={() => openDialog('duplicate', { world }, { name: `${world.name} (copy)` })} />
@@ -286,6 +311,13 @@ const WorldsPage = () => {
                     <Field label="Seed" hint="Optional. Leave empty for a random seed.">
                         <input className={inputClass} value={form.seed} onChange={(e) => setForm({ ...form, seed: e.target.value })} />
                     </Field>
+                    {setups.length > 1 && (
+                        <Field label="Version (setup)">
+                            <select className={inputClass} value={form.setupId || ''} onChange={(e) => setForm({ ...form, setupId: e.target.value })}>
+                                {setups.map((setup) => <option key={setup.id} value={setup.id}>{setupLabel(setup)}{setup.active ? ' (active)' : ''}</option>)}
+                            </select>
+                        </Field>
+                    )}
                     <Field label="World type">
                         <select className={inputClass} value={form.levelType} onChange={(e) => setForm({ ...form, levelType: e.target.value })}>
                             <option value="default">Default</option>
@@ -299,6 +331,37 @@ const WorldsPage = () => {
                         Make it the active world {stopped ? '' : '(stop the server first)'}
                     </label>
                     <p className="text-xs text-slate-500">Mods and configuration are shared by all worlds.</p>
+                </Modal>
+            )}
+
+            {dialog?.type === 'upgrade' && (
+                <Modal title="Upgrade world?" onClose={() => setDialog(null)} footer={<>
+                    <Button variant="ghost" onClick={() => setDialog(null)}>Cancel</Button>
+                    <Button onClick={dialog.retry}>Back up and upgrade</Button>
+                </>}>
+                    <Notice tone="warn">{dialog.message}</Notice>
+                    <p className="text-sm text-slate-400">The backup (kind "pre-upgrade") lets you restore the old version later.</p>
+                </Modal>
+            )}
+
+            {dialog?.type === 'version' && (
+                <Modal title={`Version for ${dialogWorld.name}`} onClose={() => setDialog(null)} footer={<>
+                    <Button variant="ghost" onClick={() => setDialog(null)}>Cancel</Button>
+                    <Button disabled={!form.setupId || form.setupId === dialogWorld.setup?.id}
+                        onClick={() => run(
+                            () => api.patch(`/api/worlds/${dialogWorld.id}`, { setupId: form.setupId }),
+                            'World moved to the new version.',
+                            () => api.patch(`/api/worlds/${dialogWorld.id}`, { setupId: form.setupId, confirmUpgrade: true }),
+                        )}>
+                        Move
+                    </Button>
+                </>}>
+                    <Field label="Run this world on">
+                        <select className={inputClass} value={form.setupId} onChange={(e) => setForm({ ...form, setupId: e.target.value })}>
+                            {setups.map((setup) => <option key={setup.id} value={setup.id}>{setupLabel(setup)}{setup.active ? ' (active)' : ''}</option>)}
+                        </select>
+                    </Field>
+                    <p className="text-xs text-slate-500">Moving to a newer version upgrades the world the next time it runs (a backup is taken first). Older versions are refused.</p>
                 </Modal>
             )}
 

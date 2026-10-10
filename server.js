@@ -22,6 +22,9 @@ const { ModrinthProvider } = require('./lib/addons/modrinth');
 const { CurseForgeProvider } = require('./lib/addons/curseforge');
 const { ModPack } = require('./lib/modpack');
 const { DiscordSync } = require('./lib/discord');
+const { SetupManager } = require('./lib/setups');
+const { WorldSwitcher } = require('./lib/world-switcher');
+const mojang = require('./lib/installer/mojang');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
 
@@ -51,6 +54,10 @@ const addons = new AddonManager({
         new CurseForgeProvider({ apiKey: config.CURSEFORGE_API_KEY }),
     ],
 });
+const setups = new SetupManager({ config, state, minecraft, addons });
+installer.setups = setups;
+setups.migrate();
+const switcher = new WorldSwitcher({ worlds, setups, backups, operations, minecraft, listReleases: mojang.listReleases });
 const modpack = new ModPack({ config, state, addons });
 const discord = new DiscordSync({ config, state, minecraft, worlds, players, modpack });
 const auth = createAuth(config.SESSION_SECRET);
@@ -106,13 +113,14 @@ const shutdownManager = async () => {
     setTimeout(() => process.exit(0), 3000).unref();
 };
 
-const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, io, shutdownManager };
+const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, setups, switcher, io, shutdownManager };
 app.use('/api', require('./routes/core')(routeDeps));
 app.use('/api/server', require('./routes/server-install')(routeDeps));
 app.use('/api/worlds', require('./routes/worlds')(routeDeps));
 app.use('/api/backups', require('./routes/backups')(routeDeps));
 app.use('/api/addons', require('./routes/addons')(routeDeps));
 app.use('/api/discord', require('./routes/discord')(routeDeps));
+app.use('/api/setups', require('./routes/setups')(routeDeps));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -135,6 +143,7 @@ app.use((err, req, res, next) => {
         error: status >= 500 && !err.code ? 'Internal server error' : err.message,
         code: err.code,
         current: err.current,
+        details: err.details,
     });
 });
 

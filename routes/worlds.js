@@ -60,18 +60,26 @@ const receiveUpload = (req, directory) => new Promise((resolve, reject) => {
     req.pipe(busboy);
 });
 
-module.exports = ({ auth, config, worlds, backups, minecraft, operations }) => {
+module.exports = ({ auth, config, worlds, backups, minecraft, operations, setups, switcher }) => {
     const router = express.Router();
     router.use(auth.requireAuth, auth.requireAdmin);
 
     const describe = async (world) => {
-        const dir = worlds.dirFor(world.id);
+        const level = worlds.levelInfo(world.id);
+        const setup = world.setupId ? setups.profileOf(world.setupId) : null;
         return {
             ...world,
             active: worlds.activeId() === world.id,
-            generated: fs.existsSync(path.join(dir, 'level.dat')),
+            generated: Boolean(level) || fs.existsSync(path.join(worlds.dirFor(world.id), 'level.dat')),
+            savedVersion: level?.versionName || null,
+            setup: setup ? { id: world.setupId, loader: setup.loader, minecraftVersion: setup.minecraftVersion } : null,
             sizeBytes: await worlds.sizeOf(world.id),
         };
+    };
+
+    const sendSwitch = async (res, result) => {
+        if (result.job) return res.status(202).json(result.job);
+        res.json(await describe(result.world));
     };
 
     router.get('/', asyncHandler(async (req, res) => {
@@ -87,8 +95,8 @@ module.exports = ({ auth, config, worlds, backups, minecraft, operations }) => {
         const { name, seed, levelType, setActive } = req.body || {};
         const world = await operations.runExclusive('world.create', async () => {
             if (setActive) worlds.assertStopped('switch worlds');
-            const created = worlds.create({ name, seed, levelType });
-            if (setActive) worlds.activate(created.id);
+            const created = worlds.create({ name, seed, levelType, setupId: req.body?.setupId && setups.profileOf(req.body.setupId) ? req.body.setupId : undefined });
+            if (setActive && (!created.setupId || created.setupId === setups.activeId())) worlds.activate(created.id);
             return created;
         });
         res.status(201).json(await describe(world));
@@ -105,15 +113,23 @@ module.exports = ({ auth, config, worlds, backups, minecraft, operations }) => {
         let job;
         try {
             const name = String(fields.name || '').trim() || 'Imported world';
+            const requestedSetup = fields.setupId && setups.profileOf(String(fields.setupId)) ? String(fields.setupId) : null;
             job = operations.startJob('world.import', async (ctx) => {
-                const world = worlds.create({ name, source: 'imported' });
+                const world = worlds.create({ name, source: 'imported', setupId: requestedSetup || undefined });
                 try {
                     ctx.progress(5, 'Extracting world');
                     await extractWorld(file, worlds.dirFor(world.id), {
                         freeBytes: await freeDiskBytes(config.SERVER_DIR),
                         onProgress: (done, total) => total && ctx.progress(5 + (90 * done) / total),
                     });
-                    return { worldId: world.id };
+                    // Prefer a setup on the exact version the world was saved with.
+                    const level = worlds.levelInfo(world.id);
+                    const match = level?.versionName && !requestedSetup
+                        ? setups.list().find((setup) => setup.minecraftVersion === level.versionName)
+                        : null;
+                    if (match) worlds.setSetup(world.id, match.id);
+                    if (level?.versionName) ctx.log(`World was saved with Minecraft ${level.versionName}.`);
+                    return { worldId: world.id, savedVersion: level?.versionName || null };
                 } catch (error) {
                     worlds.forget(world.id);
                     fs.rmSync(worlds.dirFor(world.id), { recursive: true, force: true });
@@ -130,12 +146,20 @@ module.exports = ({ auth, config, worlds, backups, minecraft, operations }) => {
     }));
 
     router.post('/:id/activate', asyncHandler(async (req, res) => {
-        const world = await operations.runExclusive('world.switch', async () => worlds.activate(req.params.id));
-        res.json(await describe(world));
+        await sendSwitch(res, await switcher.activate(req.params.id, { confirmUpgrade: req.body?.confirmUpgrade }));
+    }));
+
+    router.get('/:id/check', asyncHandler(async (req, res) => {
+        const world = worlds.get(req.params.id);
+        res.json(await switcher.check(world, String(req.query.setupId || world.setupId || setups.activeId())));
     }));
 
     router.patch('/:id', asyncHandler(async (req, res) => {
-        res.json(await describe(worlds.rename(req.params.id, req.body?.name)));
+        if (req.body?.name !== undefined) worlds.rename(req.params.id, req.body.name);
+        if (req.body?.setupId) {
+            return sendSwitch(res, await switcher.moveToSetup(req.params.id, String(req.body.setupId), { confirmUpgrade: req.body.confirmUpgrade }));
+        }
+        res.json(await describe(worlds.get(req.params.id)));
     }));
 
     router.post('/:id/duplicate', asyncHandler(async (req, res) => {

@@ -187,7 +187,7 @@ const main = async () => {
             log('  RCON list ok');
             await stopAndCheck(socket);
         }
-        for (const name of ['worlds', 'backups', 'mods']) {
+        for (const name of ['worlds', 'backups', 'mods', 'setups']) {
             if (!scenarios.has(name)) continue;
             log(`Scenario: ${name}`);
             await require(`./scenario-${name}.cjs`)(context);
