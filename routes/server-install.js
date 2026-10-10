@@ -33,5 +33,18 @@ module.exports = ({ auth, installer }) => {
         res.json({ profile: await installer.updateProfile(req.body) });
     }));
 
+    // Start Minecraft automatically whenever the manager starts (e.g. after a reboot).
+    router.get('/autostart', (req, res) => {
+        res.json({ enabled: Boolean(installer.state.get().autoStartMinecraft) });
+    });
+
+    router.put('/autostart', (req, res) => {
+        const enabled = Boolean(req.body?.enabled);
+        installer.state.update((draft) => {
+            draft.autoStartMinecraft = enabled;
+        });
+        res.json({ enabled });
+    });
+
     return router;
 };

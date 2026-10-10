@@ -2,7 +2,9 @@
 
 [CmdletBinding()]
 param(
-    [switch]$StartManagerAtLaunch
+    [switch]$StartManagerAtLaunch,
+    # Opens the dashboard once the manager is healthy (used by the desktop shortcut).
+    [switch]$OpenDashboard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,9 +20,21 @@ try {
     $mutexAcquired = $true
 }
 if (-not $mutexAcquired) {
+    # Already running: ask that tray to start the manager (if stopped) and open the dashboard.
+    if ($StartManagerAtLaunch -or $OpenDashboard) {
+        try {
+            $wake = [System.Threading.EventWaitHandle]::OpenExisting('Local\MCManagerTrayWake')
+            [void]$wake.Set()
+            $wake.Dispose()
+        } catch {
+            Start-Process 'http://127.0.0.1:3000'
+        }
+    }
     $script:TrayMutex.Dispose()
     exit 0
 }
+$script:WakeEvent = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, 'Local\MCManagerTrayWake')
+$script:OpenWhenHealthy = [bool]$OpenDashboard
 
 $script:SandboxRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $script:ManagerRoot = Join-Path $script:SandboxRoot 'mc-manager'
@@ -133,6 +147,10 @@ function Get-ManagerHealth {
 }
 
 function Update-TrayStatus {
+    if ($script:WakeEvent.WaitOne(0)) {
+        $script:OpenWhenHealthy = $true
+        if ((Get-ManagerProcessState) -eq 'STOPPED') { Start-Manager }
+    }
     $processState = Get-ManagerProcessState
     if ($processState -eq 'STOPPED') {
         Set-TrayIconState 'STOPPED'
@@ -142,6 +160,10 @@ function Update-TrayStatus {
     $health = Get-ManagerHealth
     if ($health -and $health.ok) {
         Set-TrayIconState 'RUNNING' "Minecraft $($health.minecraft)"
+        if ($script:OpenWhenHealthy) {
+            $script:OpenWhenHealthy = $false
+            Open-Manager
+        }
     } else {
         Set-TrayIconState 'STARTING'
     }

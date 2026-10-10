@@ -305,4 +305,8 @@ process.once('SIGTERM', shutdownManager);
 
 server.listen(config.PORT, config.HOST, () => {
     console.log(`MC Manager running on http://${config.HOST === '0.0.0.0' ? 'localhost' : config.HOST}:${config.PORT}`);
+    if (state.get().autoStartMinecraft && minecraft.isConfigured()) {
+        console.log('Auto-start is on; starting Minecraft.');
+        setTimeout(() => minecraft.start().catch((error) => console.error('Auto-start failed:', error.message)), 2000);
+    }
 });

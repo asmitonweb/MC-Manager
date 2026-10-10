@@ -13,6 +13,28 @@ const LOADER_INFO = {
     forge: 'The classic loader for large content mods. Minecraft 1.17 and later.',
 };
 
+// Starts Minecraft whenever the manager starts (the manager itself starts at Windows logon).
+const AutoStart = () => {
+    const [enabled, setEnabled] = useState(null);
+    useEffect(() => {
+        api.get('/api/server/autostart').then((result) => setEnabled(result.enabled)).catch(() => {});
+    }, []);
+    const toggle = async () => {
+        const result = await api.put('/api/server/autostart', { enabled: !enabled });
+        setEnabled(result.enabled);
+    };
+    if (enabled === null) return null;
+    return (
+        <label className="flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-xl p-4 cursor-pointer">
+            <input type="checkbox" checked={enabled} onChange={toggle} className="w-4 h-4 accent-cyan-500" />
+            <div>
+                <div className="text-sm text-slate-200">Start Minecraft automatically</div>
+                <div className="text-xs text-slate-500">When the manager starts (for example after the PC reboots and logs in), the active world starts too.</div>
+            </div>
+        </label>
+    );
+};
+
 const ProfileSummary = ({ options, onReinstall, onSaved }) => {
     const { profile } = options;
     const { status } = useSocket();
@@ -405,7 +427,10 @@ const ServerPage = () => {
                 <SetupList setups={setups} onAdd={() => setMode('new')} onChanged={load} />
             )}
             {options && options.profile && !reinstalling && (
-                <ProfileSummary options={options} onReinstall={() => setReinstalling(true)} onSaved={load} />
+                <div className="space-y-4">
+                    <ProfileSummary options={options} onReinstall={() => setReinstalling(true)} onSaved={load} />
+                    <AutoStart />
+                </div>
             )}
             {options && (!options.profile || reinstalling) && (
                 <Wizard
