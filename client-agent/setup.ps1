@@ -95,7 +95,8 @@ function Save-Owned($list) { Write-Text (Join-Path $Root 'owned.txt') ((@($list 
 function Set-Profile($game, $vid, $label) {
     $file = Join-Path $game 'launcher_profiles.json'
     $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
-    $entry = '"' + $vid + '": {"name": ' + (Json-Str $label) + ', "type": "custom", "lastVersionId": "' + $vid + '", "icon": "Grass", "created": "' + $now + '", "lastUsed": "' + $now + '"}'
+    # No "icon": launchers then show their Fabric look instead of the vanilla grass block.
+    $entry = '"' + $vid + '": {"name": ' + (Json-Str $label) + ', "type": "custom", "lastVersionId": "' + $vid + '", "created": "' + $now + '", "lastUsed": "' + $now + '"}'
     if (-not (Test-Path -LiteralPath $file)) {
         Write-Text $file ('{"profiles": {' + $entry + '}, "settings": {}, "version": 3}')
         return
@@ -103,9 +104,14 @@ function Set-Profile($game, $vid, $label) {
     $text = [IO.File]::ReadAllText($file)
     $backup = "$file.$Slug.bak"
     if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $file -Destination $backup }
-    $own = [regex]::Match($text, '("' + [regex]::Escape($vid) + '"\s*:\s*\{[^{}]*?"name"\s*:\s*)"(?:[^"\\]|\\.)*"')
+    # Our profile, possibly with one level of nested objects (e.g. a resolution the player set).
+    $own = [regex]::Match($text, '"' + [regex]::Escape($vid) + '"\s*:\s*\{(?:[^{}]|\{[^{}]*\})*\}')
     if ($own.Success) {
-        $text = $text.Substring(0, $own.Index) + $own.Groups[1].Value + (Json-Str $label) + $text.Substring($own.Index + $own.Length)
+        # Keep the player's own settings; refresh the name and drop the old grass icon.
+        $obj = ([regex]'("name"\s*:\s*)"(?:[^"\\]|\\.)*"').Replace($own.Value, '${1}' + (Json-Str $label).Replace('$', '$$'), 1)
+        $obj = [regex]::Replace($obj, '\s*"icon"\s*:\s*"[^"]*"\s*,', '')
+        $obj = [regex]::Replace($obj, ',\s*"icon"\s*:\s*"[^"]*"', '')
+        $text = $text.Substring(0, $own.Index) + $obj + $text.Substring($own.Index + $own.Length)
     } elseif ($text.Contains('"' + $vid + '"')) {
         return
     } else {

@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * Also runnable directly for testing: java -jar agent.jar <setupId> [gameDir]
  */
 public final class Agent {
-    static final String VERSION = "1";
+    static final String VERSION = "2";
     static final List<String> SHARED_KINDS = List.of("shaderpacks", "resourcepacks");
     static final Pattern SAFE_NAME = Pattern.compile("^[^\\\\/:*?\"<>|\\x00-\\x1f]+$");
 
@@ -276,16 +276,23 @@ public final class Agent {
 
     void setProfile(Path file, String vid, String label) throws IOException {
         String now = Instant.now().toString();
+        // No "icon": launchers then show their Fabric look instead of the vanilla grass block.
         String entry = "\"" + vid + "\": {\"name\": " + jsonString(label) + ", \"type\": \"custom\", \"lastVersionId\": \"" + vid
-            + "\", \"icon\": \"Grass\", \"created\": \"" + now + "\", \"lastUsed\": \"" + now + "\"}";
+            + "\", \"created\": \"" + now + "\", \"lastUsed\": \"" + now + "\"}";
         if (!Files.exists(file)) {
             Files.writeString(file, "{\"profiles\": {" + entry + "}, \"settings\": {}, \"version\": 3}");
             return;
         }
         String text = Files.readString(file);
-        Matcher own = Pattern.compile("(\"" + Pattern.quote(vid) + "\"\\s*:\\s*\\{[^{}]*?\"name\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"").matcher(text);
+        // Our profile, possibly with one level of nested objects (e.g. a resolution the player set).
+        Matcher own = Pattern.compile("\"" + Pattern.quote(vid) + "\"\\s*:\\s*\\{(?:[^{}]|\\{[^{}]*\\})*\\}").matcher(text);
         if (own.find()) {
-            text = text.substring(0, own.start()) + own.group(1) + jsonString(label) + text.substring(own.end());
+            // Keep the player's own settings; refresh the name and drop the old grass icon.
+            String obj = Pattern.compile("(\"name\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"").matcher(own.group())
+                .replaceFirst(Matcher.quoteReplacement("\"name\": " + jsonString(label)));
+            obj = obj.replaceAll("\\s*\"icon\"\\s*:\\s*\"[^\"]*\"\\s*,", "").replaceAll(",\\s*\"icon\"\\s*:\\s*\"[^\"]*\"", "");
+            if (obj.equals(own.group())) return;
+            text = text.substring(0, own.start()) + obj + text.substring(own.end());
         } else if (text.contains("\"" + vid + "\"")) {
             return;
         } else {

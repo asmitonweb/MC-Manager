@@ -94,7 +94,7 @@ test('brand, launcher ids and labels come from the server name', () => {
     const { clientSync } = setup();
     assert.deepEqual(clientSync.brand(), { name: 'Closed Room', slug: 'closedroom', setupFile: 'ClosedRoom-Setup.cmd' });
     assert.equal(clientSync.versionId('fabric-1.21.1'), 'closedroom-fabric-1.21.1');
-    assert.equal(clientSync.label('fabric-1.21.1', { loader: 'fabric', minecraftVersion: '1.21.1' }), 'Closed Room · Attack on Titan');
+    assert.equal(clientSync.label('fabric-1.21.1', { loader: 'fabric', minecraftVersion: '1.21.1' }), 'Closed Room · Attack on Titan · Fabric 1.21.1');
 });
 
 test('manifest lists client mods with CDN and manager URLs, and skips server-only mods', async () => {
@@ -111,7 +111,7 @@ test('manifest lists client mods with CDN and manager URLs, and skips server-onl
     assert.match(aot.hash, /^sha512:[0-9a-f]{128}$/);
 
     const text = ClientSync.syncText(manifest);
-    assert.match(text, /^setup\tfabric-1\.21\.1\tclosedroom-fabric-1\.21\.1\tClosed Room · Attack on Titan\t1\.21\.1\tfabric\t0\.19\.5\t1\t[0-9a-f]{16}$/m);
+    assert.match(text, /^setup\tfabric-1\.21\.1\tclosedroom-fabric-1\.21\.1\tClosed Room · Attack on Titan · Fabric 1\.21\.1\t1\.21\.1\tfabric\t0\.19\.5\t1\t[0-9a-f]{16}$/m);
     assert.match(text, /^file\tfabric-1\.21\.1\tmods\taot\.jar\tsha512:/m);
     assert.doesNotMatch(text, /server-only/);
 });
@@ -244,7 +244,8 @@ test('the agent syncs a player folder against the manager', { skip: !hasJava && 
     fs.writeFileSync(path.join(clientRoot, 'client.properties'), `base=${base}\ntoken=${TOKEN}\nslug=closedroom\n`);
     fs.writeFileSync(path.join(clientRoot, 'instances', 'fabric-1.21.1', 'mods', 'stale.jar'), 'old');
     fs.writeFileSync(path.join(game, 'shaderpacks', 'PlayersOwn.zip'), 'mine');
-    fs.writeFileSync(path.join(game, 'launcher_profiles.json'), '{\n  "profiles": {\n    "abc": { "name": "Mine", "type": "custom" }\n  },\n  "version": 3\n}');
+    // An entry from an older setup (grass icon) that the player gave a custom resolution.
+    fs.writeFileSync(path.join(game, 'launcher_profiles.json'), '{\n  "profiles": {\n    "abc": { "name": "Mine", "type": "custom" },\n    "closedroom-fabric-1.21.1": { "name": "old", "type": "custom", "lastVersionId": "closedroom-fabric-1.21.1", "icon": "Grass", "resolution": { "width": 854, "height": 480 } }\n  },\n  "version": 3\n}');
     const run = () => new Promise((resolve, reject) => {
         require('child_process').execFile('java', [`-Dmcmanager.root=${clientRoot}`, '-jar', AGENT_JAR, 'fabric-1.21.1', game], { timeout: 60000 }, (error, stdout) => (error ? reject(error) : resolve(stdout)));
     });
@@ -261,7 +262,9 @@ test('the agent syncs a player folder against the manager', { skip: !hasJava && 
         assert.ok(version.arguments.jvm.includes(`-javaagent:${fwdRoot}/${agentName}=fabric-1.21.1`));
         const profiles = JSON.parse(fs.readFileSync(path.join(game, 'launcher_profiles.json'), 'utf8'));
         assert.equal(profiles.profiles.abc.name, 'Mine');
-        assert.equal(profiles.profiles['closedroom-fabric-1.21.1'].name, 'Closed Room · Attack on Titan');
+        assert.equal(profiles.profiles['closedroom-fabric-1.21.1'].name, 'Closed Room · Attack on Titan · Fabric 1.21.1');
+        assert.equal(profiles.profiles['closedroom-fabric-1.21.1'].icon, undefined, 'no vanilla grass icon');
+        assert.deepEqual(profiles.profiles['closedroom-fabric-1.21.1'].resolution, { width: 854, height: 480 }, 'player settings kept');
         assert.equal(profiles.profiles['closedroom-fabric-1.21.1'].lastVersionId, 'closedroom-fabric-1.21.1');
         const servers = fs.readFileSync(path.join(game, 'servers.dat'));
         assert.ok(servers.includes(Buffer.from('100.64.0.10:25565')));
@@ -273,7 +276,7 @@ test('the agent syncs a player folder against the manager', { skip: !hasJava && 
         assert.doesNotMatch(second, /\+ /);
         const again = JSON.parse(fs.readFileSync(path.join(game, 'launcher_profiles.json'), 'utf8'));
         assert.equal(Object.keys(again.profiles).length, 2);
-        assert.equal(again.profiles['closedroom-fabric-1.21.1'].name, 'Closed Room · Titans');
+        assert.equal(again.profiles['closedroom-fabric-1.21.1'].name, 'Closed Room · Titans · Fabric 1.21.1');
         assert.equal(fs.readFileSync(path.join(game, 'servers.dat')).length, servers.length, 'server entry not duplicated');
 
         // Manager unreachable: the game still starts with what it has.

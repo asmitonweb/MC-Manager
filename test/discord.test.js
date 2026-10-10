@@ -223,6 +223,7 @@ test('with client sync, the guide links the one-click setup and notices name the
         agentInfo: () => ({ fileName: 'agent-x.jar' }),
         brand: () => ({ setupFile: 'ClosedRoom-Setup.cmd' }),
         label: () => 'Closed Room · Attack on Titan',
+        filesFor: () => [{ kind: 'mods', title: "Danny's AOT", versionNumber: '2.5' }, { kind: 'shaderpacks', title: 'Complementary', versionNumber: 'r5' }],
         setupCommand: (base, token) => `powershell -c "iwr ${base}/client/${token}/ClosedRoom-Setup.cmd -OutFile x; & x"`,
     };
     addMod('aot', "Danny's AOT", '2.5.1.1', 'required');
