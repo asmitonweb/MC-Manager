@@ -92,6 +92,26 @@ function Read-Owned {
 }
 function Save-Owned($list) { Write-Text (Join-Path $Root 'owned.txt') ((@($list | Sort-Object -Unique) -join "`n") + "`n") }
 
+# Start and end index of the profile object whose lastVersionId is $vid, or $null.
+function Find-ProfileObject($text, $vid) {
+    $m = [regex]::Match($text, '"lastVersionId"\s*:\s*"' + [regex]::Escape($vid) + '"')
+    if (-not $m.Success) { return $null }
+    $depth = 0; $start = -1
+    for ($i = $m.Index - 1; $i -ge 0; $i--) {
+        $c = $text[$i]
+        if ($c -eq '}') { $depth++ }
+        elseif ($c -eq '{') { if ($depth -eq 0) { $start = $i; break }; $depth-- }
+    }
+    if ($start -lt 0) { return $null }
+    $depth = 0
+    for ($j = $start; $j -lt $text.Length; $j++) {
+        $c = $text[$j]
+        if ($c -eq '{') { $depth++ }
+        elseif ($c -eq '}') { $depth--; if ($depth -eq 0) { return @($start, $j) } }
+    }
+    $null
+}
+
 function Set-Profile($game, $vid, $label) {
     $file = Join-Path $game 'launcher_profiles.json'
     $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
@@ -104,16 +124,16 @@ function Set-Profile($game, $vid, $label) {
     $text = [IO.File]::ReadAllText($file)
     $backup = "$file.$Slug.bak"
     if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $file -Destination $backup }
-    # Our profile, possibly with one level of nested objects (e.g. a resolution the player set).
-    $own = [regex]::Match($text, '"' + [regex]::Escape($vid) + '"\s*:\s*\{(?:[^{}]|\{[^{}]*\})*\}')
-    if ($own.Success) {
+    # Launchers may re-key profiles (SKLauncher uses random ids), so find ours by its version.
+    $span = Find-ProfileObject $text $vid
+    if ($span) {
         # Keep the player's own settings; refresh the name and drop the old grass icon.
-        $obj = ([regex]'("name"\s*:\s*)"(?:[^"\\]|\\.)*"').Replace($own.Value, '${1}' + (Json-Str $label).Replace('$', '$$'), 1)
+        $old = $text.Substring($span[0], $span[1] - $span[0] + 1)
+        $obj = ([regex]'("name"\s*:\s*)"(?:[^"\\]|\\.)*"').Replace($old, '${1}' + (Json-Str $label).Replace('$', '$$'), 1)
         $obj = [regex]::Replace($obj, '\s*"icon"\s*:\s*"[^"]*"\s*,', '')
         $obj = [regex]::Replace($obj, ',\s*"icon"\s*:\s*"[^"]*"', '')
-        $text = $text.Substring(0, $own.Index) + $obj + $text.Substring($own.Index + $own.Length)
-    } elseif ($text.Contains('"' + $vid + '"')) {
-        return
+        if ($obj -eq $old) { return }
+        $text = $text.Substring(0, $span[0]) + $obj + $text.Substring($span[1] + 1)
     } else {
         $m = [regex]::Match($text, '"profiles"\s*:\s*\{')
         if (-not $m.Success) { Say "    could not read $file; pick the version '$vid' manually" Yellow; return }
@@ -128,9 +148,20 @@ function Remove-Profiles($game) {
     $file = Join-Path $game 'launcher_profiles.json'
     if (-not (Test-Path -LiteralPath $file)) { return }
     $text = [IO.File]::ReadAllText($file)
-    $new = [regex]::Replace($text, '"' + [regex]::Escape($Slug) + '-[^"]*"\s*:\s*\{[^{}]*\}\s*,?\s*', '')
-    $new = [regex]::Replace($new, ',(\s*\})', '$1')
-    if ($new -ne $text) { Write-Text $file $new }
+    $original = $text
+    # Every profile whose version is one of ours, whatever key the launcher gave it.
+    while ($true) {
+        $m = [regex]::Match($text, '"lastVersionId"\s*:\s*"(' + [regex]::Escape($Slug) + '-[^"]*)"')
+        if (-not $m.Success) { break }
+        $span = Find-ProfileObject $text $m.Groups[1].Value
+        if (-not $span) { break }
+        $key = [regex]::Match($text.Substring(0, $span[0]), '"[^"]*"\s*:\s*$')
+        if (-not $key.Success) { break }
+        $text = $text.Substring(0, $key.Index) + $text.Substring($span[1] + 1)
+        $text = [regex]::Replace($text, ',(\s*[,}])', '$1')
+        $text = [regex]::Replace($text, '\{(\s*),', '{$1')
+    }
+    if ($text -ne $original) { Write-Text $file $text }
 }
 
 function Invoke-Uninstall {

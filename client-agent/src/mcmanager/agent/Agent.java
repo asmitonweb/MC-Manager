@@ -284,17 +284,16 @@ public final class Agent {
             return;
         }
         String text = Files.readString(file);
-        // Our profile, possibly with one level of nested objects (e.g. a resolution the player set).
-        Matcher own = Pattern.compile("\"" + Pattern.quote(vid) + "\"\\s*:\\s*\\{(?:[^{}]|\\{[^{}]*\\})*\\}").matcher(text);
-        if (own.find()) {
+        // Launchers may re-key profiles (SKLauncher uses random ids), so find ours by its version.
+        int[] span = findProfileObject(text, vid);
+        if (span != null) {
             // Keep the player's own settings; refresh the name and drop the old grass icon.
-            String obj = Pattern.compile("(\"name\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"").matcher(own.group())
+            String old = text.substring(span[0], span[1] + 1);
+            String obj = Pattern.compile("(\"name\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"").matcher(old)
                 .replaceFirst(Matcher.quoteReplacement("\"name\": " + jsonString(label)));
             obj = obj.replaceAll("\\s*\"icon\"\\s*:\\s*\"[^\"]*\"\\s*,", "").replaceAll(",\\s*\"icon\"\\s*:\\s*\"[^\"]*\"", "");
-            if (obj.equals(own.group())) return;
-            text = text.substring(0, own.start()) + obj + text.substring(own.end());
-        } else if (text.contains("\"" + vid + "\"")) {
-            return;
+            if (obj.equals(old)) return;
+            text = text.substring(0, span[0]) + obj + text.substring(span[1] + 1);
         } else {
             Matcher profiles = Pattern.compile("\"profiles\"\\s*:\\s*\\{").matcher(text);
             if (!profiles.find()) {
@@ -308,6 +307,30 @@ public final class Agent {
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         Files.writeString(tmp, text);
         move(tmp, file);
+    }
+
+    /** Start and end index of the profile object whose lastVersionId is vid, or null. */
+    static int[] findProfileObject(String text, String vid) {
+        Matcher m = Pattern.compile("\"lastVersionId\"\\s*:\\s*\"" + Pattern.quote(vid) + "\"").matcher(text);
+        if (!m.find()) return null;
+        int depth = 0;
+        int start = -1;
+        for (int i = m.start() - 1; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (c == '}') depth++;
+            else if (c == '{') {
+                if (depth == 0) { start = i; break; }
+                depth--;
+            }
+        }
+        if (start < 0) return null;
+        depth = 0;
+        for (int j = start; j < text.length(); j++) {
+            char c = text.charAt(j);
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return new int[] { start, j };
+        }
+        return null;
     }
 
     static String jsonString(String value) {
