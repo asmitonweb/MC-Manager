@@ -142,3 +142,13 @@ test('map files are served with gzip tiles, 204 for missing tiles and no path es
     }
     assert.equal(map.view().ready, true);
 });
+
+test('BlueMap finishing its load (or asking for the download) triggers the setup', async () => {
+    const { map, minecraft, timers } = setup();
+    minecraft.emit('line', '[08:14:10] [Server thread/INFO]: <Eren> Loaded!');
+    assert.equal(timers.pending.size, 0, 'ignores other threads');
+    minecraft.emit('line', '[08:14:10] [BlueMap-Plugin-Loading/WARN]: You must accept the required file download in order for BlueMap to work!');
+    timers.run(1000);
+    await flush();
+    assert.deepEqual(minecraft.commands, ['bluemap stop']);
+});
