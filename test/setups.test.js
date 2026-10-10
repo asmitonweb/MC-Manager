@@ -179,3 +179,27 @@ test('setups in use or active cannot be removed', () => {
     assert.throws(() => ctx.setups.remove('fabric-26.3'), { code: 'SETUP_ACTIVE' });
     assert.throws(() => ctx.setups.remove('fabric-1.21.1'), { code: 'SETUP_IN_USE' });
 });
+
+test('mods can be installed into a parked setup', async () => {
+    const ctx = setup();
+    ctx.setups.migrate();
+    installSecond(ctx, '26.3');
+    const version = { id: 'v1', projectId: 'voice', versionNumber: '2.6', published: '2026-01-01', loaders: ['fabric'], gameVersions: ['1.21.1'], file: { url: 'https://cdn.modrinth.com/voice.jar', fileName: 'voicechat.jar', hashes: {} }, dependencies: [] };
+    const modrinth = {
+        id: 'modrinth',
+        status: () => ({ id: 'modrinth', enabled: true }),
+        bestVersion: async (projectId, target) => (target.mc === '1.21.1' ? version : null),
+        getVersions: async () => [version],
+        getProjects: async (ids) => ids.map((id) => ({ id, title: 'Simple Voice Chat', serverSide: 'optional', clientSide: 'optional' })),
+    };
+    Object.assign(ctx.setups.addons, { operations: ctx.operations, providers: { modrinth }, download: async (url, dest) => { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, 'jar'); return { sha1: 'a', sha512: 'b' }; } });
+
+    const parked = ctx.setups.addonsFor('fabric-1.21.1');
+    assert.notEqual(parked, ctx.setups.addons);
+    assert.equal(ctx.setups.addonsFor('fabric-26.3'), ctx.setups.addons);
+    const job = await parked.install({ items: [{ projectId: 'voice' }] });
+    assert.equal((await waitJob(ctx.operations, job)).status, 'succeeded');
+    assert.ok(fs.existsSync(path.join(ctx.root, 'setups', 'fabric-1.21.1', 'files', 'mods', 'voicechat.jar')));
+    assert.deepEqual(ctx.setups.modsOf('fabric-1.21.1').map((m) => m.title).sort(), ["Danny's AOT", 'Simple Voice Chat']);
+    assert.deepEqual(ctx.manifest.get().mods, [], 'active setup untouched');
+});
