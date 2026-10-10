@@ -6,3 +6,5 @@ client/node_modules
 manager-data/
 *.zip
 *.log
+client-agent/build
+client-agent/dist

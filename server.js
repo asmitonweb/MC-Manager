@@ -24,6 +24,7 @@ const { ModPack } = require('./lib/modpack');
 const { DiscordSync } = require('./lib/discord');
 const { SetupManager } = require('./lib/setups');
 const { WorldSwitcher } = require('./lib/world-switcher');
+const { ClientSync } = require('./lib/client-sync');
 const mojang = require('./lib/installer/mojang');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
@@ -60,6 +61,8 @@ setups.migrate();
 const switcher = new WorldSwitcher({ worlds, setups, backups, operations, minecraft, listReleases: mojang.listReleases });
 const modpack = new ModPack({ config, state, addons });
 const discord = new DiscordSync({ config, state, minecraft, worlds, players, modpack });
+const clientSync = new ClientSync({ config, state, setups, addons, worlds, discord, modpack });
+discord.clientSync = clientSync;
 const auth = createAuth(config.SESSION_SECRET);
 
 try {
@@ -113,7 +116,7 @@ const shutdownManager = async () => {
     setTimeout(() => process.exit(0), 3000).unref();
 };
 
-const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, setups, switcher, io, shutdownManager };
+const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, setups, switcher, clientSync, io, shutdownManager };
 app.use('/api', require('./routes/core')(routeDeps));
 app.use('/api/server', require('./routes/server-install')(routeDeps));
 app.use('/api/worlds', require('./routes/worlds')(routeDeps));
@@ -121,6 +124,7 @@ app.use('/api/backups', require('./routes/backups')(routeDeps));
 app.use('/api/addons', require('./routes/addons')(routeDeps));
 app.use('/api/discord', require('./routes/discord')(routeDeps));
 app.use('/api/setups', require('./routes/setups')(routeDeps));
+app.use('/api/client', require('./routes/client').adminRouter(routeDeps));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -134,6 +138,9 @@ app.get('/pack/:token/:name', async (req, res, next) => {
         next(error);
     }
 });
+
+// Player game sync (setup script, agent, manifest, files).
+app.use('/client/:token', require('./routes/client').publicRouter(routeDeps));
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {

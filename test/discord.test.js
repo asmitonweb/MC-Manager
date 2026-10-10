@@ -211,3 +211,32 @@ test('an existing forum post can be reused from its link', async () => {
     ]);
     assert.equal(discord.publicView().postUrl, 'https://discord.com/channels/111111111111111111/222222222222222222');
 });
+
+test('with client sync, the guide links the one-click setup and notices name the launcher entry', async () => {
+    const { discord, requests, addMod, state } = setup();
+    state.update((draft) => {
+        draft.profile.loaderVersion = '0.19.5';
+        draft.activeSetupId = 'fabric-1.21.1';
+    });
+    discord.clientSync = {
+        agentInfo: () => ({ fileName: 'agent-x.jar' }),
+        brand: () => ({ setupFile: 'ClosedRoom-Setup.cmd' }),
+        label: () => 'Closed Room · Attack on Titan',
+    };
+    addMod('aot', "Danny's AOT", '2.5.1.1', 'required');
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://100.64.0.10:3000' });
+    await discord.sync();
+    const token = discord.packToken();
+    const guide = requests[0].body.embeds[0].description;
+    assert.ok(guide.includes(`(http://100.64.0.10:3000/client/${token}/ClosedRoom-Setup.cmd)`));
+    assert.ok(guide.includes(`irm http://100.64.0.10:3000/client/${token}/setup.ps1|iex`));
+    assert.match(guide, /pick \*\*Closed Room · Attack on Titan\*\*/);
+    assert.match(requests[1].body.embeds[0].description, /One-click setup/);
+
+    requests.length = 0;
+    addMod('geckolib', 'GeckoLib', '4.9.3', 'required');
+    await discord.sync();
+    const notice = requests.find((r) => r.method === 'POST' && r.body.content);
+    assert.match(notice.body.content, /install automatically next time you press Play on \*\*Closed Room · Attack on Titan\*\*/);
+    assert.doesNotMatch(notice.body.content, /replace your/);
+});

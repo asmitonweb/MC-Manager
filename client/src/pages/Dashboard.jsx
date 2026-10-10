@@ -18,7 +18,8 @@ import {
     HardDrive,
     Globe,
     Package,
-    MessageCircle
+    MessageCircle,
+    Gamepad2
 } from 'lucide-react';
 
 const Dashboard = () => {
@@ -46,6 +47,7 @@ const Dashboard = () => {
         { path: '/server', icon: HardDrive, label: 'Server', roles: ['admin'] },
         { path: '/worlds', icon: Globe, label: 'Worlds', roles: ['admin'] },
         { path: '/mods', icon: Package, label: 'Mods', roles: ['admin'] },
+        { path: '/game-sync', icon: Gamepad2, label: 'Game Sync', roles: ['admin'] },
         { path: '/discord', icon: MessageCircle, label: 'Discord', roles: ['admin'] },
         { path: '/settings', icon: SettingsIcon, label: 'Config', roles: ['admin'] },
     ];

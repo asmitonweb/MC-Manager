@@ -37,6 +37,9 @@ sync_files() {
 
 cd "$REPO_ROOT"
 
+echo "==> Building the player sync agent"
+bash client-agent/build.sh
+
 echo "==> Syncing tray controller"
 mapfile -t tray_files < <(cd windows/tray && git ls-files -co --exclude-standard)
 sync_files windows/tray "$REMOTE_ROOT/tray" "${tray_files[@]}"
@@ -47,7 +50,7 @@ remote_ps -Action Stop
 
 echo "==> Syncing manager"
 mapfile -t app_files < <(git ls-files -co --exclude-standard | grep -v -E '^(windows/|\.env$)')
-sync_files . "$REMOTE_ROOT/mc-manager" "${app_files[@]}"
+sync_files . "$REMOTE_ROOT/mc-manager" "${app_files[@]}" client-agent/dist/agent.jar
 
 if [[ "$BUILD" == 1 ]]; then
     echo "==> Installing dependencies and building client"
