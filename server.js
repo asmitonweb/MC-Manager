@@ -25,6 +25,9 @@ const { DiscordSync } = require('./lib/discord');
 const { SetupManager } = require('./lib/setups');
 const { WorldSwitcher } = require('./lib/world-switcher');
 const { ClientSync } = require('./lib/client-sync');
+const { LogEvents } = require('./lib/log-events');
+const { Roster } = require('./lib/roster');
+const { SystemInfo, parseTickQuery } = require('./lib/system-info');
 const mojang = require('./lib/installer/mojang');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
@@ -63,6 +66,9 @@ const modpack = new ModPack({ config, state, addons });
 const discord = new DiscordSync({ config, state, minecraft, worlds, players, modpack });
 const clientSync = new ClientSync({ config, state, setups, addons, worlds, discord, modpack });
 discord.clientSync = clientSync;
+const logEvents = new LogEvents({ minecraft, requestsFile: path.join(config.DATA_DIR, 'join-requests.json') });
+const roster = new Roster({ config, minecraft, players, logEvents });
+const systemInfo = new SystemInfo({ config, state, minecraft });
 const auth = createAuth(config.SESSION_SECRET);
 
 try {
@@ -86,6 +92,8 @@ const io = new Server(server, {
 
 const ADMIN_ROOM = 'admin_room';
 const STATS_ROOM = 'stats_room';
+const COMMS_ROOM = 'comms_room';
+const CONSOLE_ROOM = 'console_room';
 const roomSize = (room) => io.of('/').adapter.rooms.get(room)?.size || 0;
 
 app.use(express.json({ limit: '1mb' }));
@@ -116,7 +124,7 @@ const shutdownManager = async () => {
     setTimeout(() => process.exit(0), 3000).unref();
 };
 
-const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, setups, switcher, clientSync, io, shutdownManager };
+const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, setups, switcher, clientSync, roster, systemInfo, io, shutdownManager };
 app.use('/api', require('./routes/core')(routeDeps));
 app.use('/api/server', require('./routes/server-install')(routeDeps));
 app.use('/api/worlds', require('./routes/worlds')(routeDeps));
@@ -125,6 +133,8 @@ app.use('/api/addons', require('./routes/addons')(routeDeps));
 app.use('/api/discord', require('./routes/discord')(routeDeps));
 app.use('/api/setups', require('./routes/setups')(routeDeps));
 app.use('/api/client', require('./routes/client').adminRouter(routeDeps));
+app.use('/api/roster', require('./routes/roster')(routeDeps));
+app.use('/api/system', require('./routes/system')(routeDeps));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -160,7 +170,9 @@ app.get('*', (req, res) => {
 
 // Minecraft -> clients
 minecraft.on('status', (status) => io.emit('status', status));
-minecraft.on('log', (text) => io.to(ADMIN_ROOM).emit('log', text));
+minecraft.on('log', (text) => {
+    if (roomSize(CONSOLE_ROOM)) io.to(CONSOLE_ROOM).emit('log', text);
+});
 minecraft.on('start_error', (message) => io.emit('start_error', message));
 minecraft.on('status', (status) => {
     if (status === 'ONLINE') worlds.touchActive();
@@ -177,26 +189,39 @@ operations.on('change', (operation) => {
 });
 operations.on('job', (job) => io.to(ADMIN_ROOM).emit('job_update', job));
 
-// One shared player poller; only polls while RCON is up and someone is watching
-// (an admin dashboard or the Discord status card).
-const pollPlayers = async () => {
-    if (!minecraft.rcon || (!roomSize(ADMIN_ROOM) && !discord.settings().enabled)) return;
+// Players come and go through log lines (no polling); RCON `list` resyncs once it connects.
+const playersChanged = () => {
+    io.to(ADMIN_ROOM).emit('player_list', players.snapshot());
+    discord.schedule();
+};
+const syncPlayers = async () => {
+    if (!minecraft.rcon) return;
     try {
-        if (players.update(await minecraft.sendCommand('list'))) {
-            io.to(ADMIN_ROOM).emit('player_list', players.snapshot());
-            discord.schedule();
-        }
+        if (players.update(await minecraft.sendCommand('list'))) playersChanged();
     } catch (error) {
         console.error('Error fetching player list:', error.message);
     }
 };
-setInterval(pollPlayers, 5000).unref();
+minecraft.on('rcon', syncPlayers);
+logEvents.on('event', (event) => {
+    if (event.type === 'join' && players.join(event.name)) playersChanged();
+    if (event.type === 'leave' && players.leave(event.name)) playersChanged();
+    if (roomSize(COMMS_ROOM)) io.to(COMMS_ROOM).emit('comms_event', event);
+});
+logEvents.on('requests', () => io.to(ADMIN_ROOM).emit('roster_changed'));
 
 // One shared stats sampler; only samples while someone has the System page open.
+// Tick timing (RCON `tick query`) is sampled every other round.
+let statsRound = 0;
 setInterval(async () => {
     if (!roomSize(STATS_ROOM)) return;
     try {
-        io.to(STATS_ROOM).emit('stats', await metrics.sample());
+        const sample = await metrics.sample();
+        statsRound += 1;
+        if (minecraft.rcon && statsRound % 2 === 0) {
+            sample.tick = parseTickQuery(await minecraft.sendCommand('tick query').catch(() => ''));
+        }
+        io.to(STATS_ROOM).emit('stats', sample);
     } catch (error) {
         console.error('Stats error:', error.message);
     }
@@ -221,7 +246,6 @@ io.on('connection', (socket) => {
 
     if (isAdmin) {
         socket.join(ADMIN_ROOM);
-        socket.emit('log_history', minecraft.logBuffer);
         socket.emit('player_list', players.snapshot());
         socket.emit('jobs', operations.listJobs({ active: true }));
     }
@@ -236,6 +260,20 @@ io.on('connection', (socket) => {
     });
     socket.on('stats_unsubscribe', () => socket.leave(STATS_ROOM));
 
+    socket.on('comms_subscribe', () => {
+        if (!isAdmin) return;
+        socket.join(COMMS_ROOM);
+        socket.emit('comms_history', logEvents.history());
+    });
+    socket.on('comms_unsubscribe', () => socket.leave(COMMS_ROOM));
+
+    socket.on('console_subscribe', () => {
+        if (!isAdmin) return;
+        socket.join(CONSOLE_ROOM);
+        socket.emit('log_history', minecraft.logBuffer);
+    });
+    socket.on('console_unsubscribe', () => socket.leave(CONSOLE_ROOM));
+
     socket.on('command', async (command) => {
         if (!isAdmin || typeof command !== 'string' || !command.trim()) return;
         try {
@@ -246,28 +284,14 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('player_action', async ({ action, player } = {}) => {
-        if (!isAdmin || !minecraft.rcon) return;
-        if (!['kick', 'ban', 'op', 'deop'].includes(action) || !/^[A-Za-z0-9_]{1,16}$/.test(player || '')) return;
-        const command = `${action} ${player}`;
-        try {
-            const response = await minecraft.sendCommand(command);
-            minecraft.appendLog(`[ACTION] ${command}: ${response}\n`);
-            pollPlayers();
-        } catch (error) {
-            console.error('Action failed:', error.message);
-        }
-    });
-
     socket.on('chat_send', async (message) => {
-        if (!minecraft.rcon || typeof message !== 'string' || !message.trim()) return;
-        const sender = isAdmin ? 'Admin' : 'User';
+        if (!isAdmin || !minecraft.rcon || typeof message !== 'string' || !message.trim()) return;
         const text = message.trim().slice(0, 256);
         try {
-            await minecraft.sendCommand(`tellraw @a ${JSON.stringify([{ text: `[${sender}] ${text}`, color: 'gold' }])}`);
-            io.emit('chat_message', { sender, message: text, timestamp: Date.now() });
+            await minecraft.sendCommand(`tellraw @a ${JSON.stringify([{ text: `[Admin] ${text}`, color: 'gold' }])}`);
+            logEvents.push({ type: 'chat', name: 'Admin', message: text, dashboard: true });
         } catch (error) {
-            console.error('Chat send error:', error.message);
+            socket.emit('start_error', `Message not sent: ${error.message}`);
         }
     });
 

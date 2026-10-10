@@ -1,21 +1,17 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
 const SocketContext = createContext(null);
 
-const MAX_LOG_ENTRIES = 1000;
-const MAX_CHAT_MESSAGES = 200;
-
-// Owns the single Socket.IO connection for the dashboard and caches the state
-// the server pushes, so pages that mount later still see history.
+// Owns the single Socket.IO connection for the dashboard and caches the small
+// state every page needs. Heavier streams (console, comms, stats) are joined by
+// the page that shows them, via useRoom.
 export const SocketProvider = ({ children }) => {
     const [socket, setSocket] = useState(null);
     const [connected, setConnected] = useState(false);
     const [status, setStatus] = useState({ value: 'UNCONFIGURED', since: 0 });
     const [operation, setOperation] = useState(null);
-    const [logs, setLogs] = useState([]);
     const [players, setPlayers] = useState({ active: [], history: [] });
-    const [chat, setChat] = useState([]);
     const [jobs, setJobs] = useState({});
     const [startError, setStartError] = useState(null);
 
@@ -28,13 +24,7 @@ export const SocketProvider = ({ children }) => {
             prev.value === value ? prev : { value, since: Date.now() }
         )));
         newSocket.on('operation', setOperation);
-        newSocket.on('log_history', (history) => setLogs(history || []));
-        newSocket.on('log', (message) => setLogs((prev) => {
-            const next = [...prev, message];
-            return next.length > MAX_LOG_ENTRIES ? next.slice(-MAX_LOG_ENTRIES) : next;
-        }));
         newSocket.on('player_list', (data) => setPlayers({ active: data.active || [], history: data.history || [] }));
-        newSocket.on('chat_message', (message) => setChat((prev) => [...prev, message].slice(-MAX_CHAT_MESSAGES)));
         newSocket.on('jobs', (list) => setJobs((prev) => ({
             ...prev,
             ...Object.fromEntries((list || []).map((job) => [job.id, job])),
@@ -62,9 +52,7 @@ export const SocketProvider = ({ children }) => {
         status: status.value,
         statusSince: status.since,
         operation,
-        logs,
         players,
-        chat,
         jobs,
         startError,
         clearStartError,
@@ -75,3 +63,35 @@ export const SocketProvider = ({ children }) => {
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useSocket = () => useContext(SocketContext);
+
+/**
+ * Joins a server-side room while the calling page is mounted (and again after
+ * reconnects) and listens to its events. The server only produces data for
+ * rooms that have members.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export const useRoom = (room, handlers) => {
+    const { socket } = useSocket();
+    const handlerRef = useRef(handlers);
+    useEffect(() => {
+        handlerRef.current = handlers;
+    });
+    const events = Object.keys(handlers).join(',');
+
+    useEffect(() => {
+        if (!socket) return undefined;
+        const listeners = events.split(',').filter(Boolean).map((event) => {
+            const listener = (...args) => handlerRef.current[event]?.(...args);
+            socket.on(event, listener);
+            return [event, listener];
+        });
+        const join = () => socket.emit(`${room}_subscribe`);
+        socket.on('connect', join);
+        join();
+        return () => {
+            socket.emit(`${room}_unsubscribe`);
+            socket.off('connect', join);
+            for (const [event, listener] of listeners) socket.off(event, listener);
+        };
+    }, [socket, room, events]);
+};

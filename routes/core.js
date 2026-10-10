@@ -3,7 +3,7 @@ const fs = require('fs');
 const { readPropertiesFile, updatePropertiesFile } = require('../lib/properties');
 const { OperationError } = require('../lib/operations');
 
-module.exports = ({ config, auth, minecraft, operations, players, shutdownManager }) => {
+module.exports = ({ config, auth, state, minecraft, operations, players, shutdownManager }) => {
     const router = express.Router();
     const { requireAuth, requireAdmin } = auth;
 
@@ -67,12 +67,23 @@ module.exports = ({ config, auth, minecraft, operations, players, shutdownManage
         operation: operations.snapshot(),
     });
 
+    // Active world and version for the dashboard header.
+    const summary = () => {
+        const s = state.get();
+        const world = s.worlds.find((entry) => entry.id === s.activeWorldId);
+        return {
+            world: world ? world.name : null,
+            version: s.profile ? `${s.profile.loader === 'forge' ? 'Forge' : 'Fabric'} ${s.profile.minecraftVersion}` : null,
+        };
+    };
+
     router.get('/status', (req, res) => {
         res.json({
             ...statusPayload(),
             service: 'RUNNING',
             manager: 'RUNNING',
             players: players.count(),
+            ...summary(),
         });
     });
 

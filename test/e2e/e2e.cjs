@@ -58,7 +58,10 @@ const waitForJob = async (job, timeoutMs = 15 * 60 * 1000) => {
 
 const connectSocket = () => new Promise((resolve, reject) => {
     const socket = io(BASE, { extraHeaders: { cookie } });
-    socket.once('connect', () => resolve(socket));
+    socket.once('connect', () => {
+        socket.emit('console_subscribe');
+        resolve(socket);
+    });
     socket.once('connect_error', reject);
 });
 
