@@ -171,7 +171,7 @@ test('forum channels: the guide opens the setup post, and updates get a post of 
         ['POST', false, null], ['POST', true, null], ['POST', false, 'thread-1'], ['POST', true, null],
     ]);
     assert.equal(requests[3].body.thread_name, '📢 Closed Room — Updates');
-    assert.equal(requests[1].body.thread_name, 'Minecraft — Closed Room');
+    assert.equal(requests[1].body.thread_name, '▶️ Closed Room — Setup & join');
     const view = discord.publicView();
     assert.equal(view.forum, true);
     assert.equal(view.threadId, 'thread-1');
@@ -313,4 +313,24 @@ test('forum channels: an old notice in the setup post is removed once updates ha
     await discord.sync();
     assert.ok(requests.some((r) => r.method === 'DELETE' && r.url.includes('/messages/77') && r.threadId === 'thread-1'));
     assert.equal(discord.settings().noticeMessageId, null);
+});
+
+test('forum channels: a fresh setup post replaces the old one, which then points to it', async () => {
+    const { discord, requests } = setup({ forum: true });
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000', serverName: 'Closed Room' });
+    await discord.sync();
+    const old = { ...discord.settings() };
+    requests.length = 0;
+    await discord.newSetupPost();
+    const s = discord.settings();
+    assert.notEqual(s.threadId, old.threadId);
+    assert.equal(s.updatesThreadId, old.updatesThreadId, 'updates keep their post');
+    const created = requests.find((r) => r.method === 'POST' && r.body.thread_name);
+    assert.equal(created.body.thread_name, '▶️ Closed Room — Setup & join');
+    assert.ok(created.body.embeds[0].title.startsWith('▶️') || created.body.embeds[0].title.startsWith('📖'), 'the guide opens it');
+    const moved = requests.find((r) => r.method === 'PATCH' && r.url.includes(`/messages/${old.guideMessageId}`));
+    assert.equal(moved.threadId, old.threadId);
+    assert.match(moved.body.content, new RegExp(`moved.*channels/guild/${s.threadId}`, 's'));
+    assert.deepEqual(moved.body.embeds, []);
+    assert.ok(requests.some((r) => r.method === 'DELETE' && r.url.includes(`/messages/${old.statusMessageId}`) && r.threadId === old.threadId));
 });

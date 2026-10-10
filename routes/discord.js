@@ -18,6 +18,10 @@ module.exports = ({ auth, discord }) => {
         res.json(discord.publicView());
     }));
 
+    router.post('/new-post', asyncHandler(async (req, res) => {
+        res.json(await discord.newSetupPost());
+    }));
+
     router.post('/regenerate-link', (req, res) => {
         res.json(discord.regenerateLink());
     });

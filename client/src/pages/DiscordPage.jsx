@@ -99,7 +99,7 @@ const DiscordPage = () => {
                         <input className={inputClass} placeholder="https://login.tailscale.com/..." {...field('inviteUrl')} />
                     </Field>
                     <Field label="Forum post title" hint="Used when a new forum post is created.">
-                        <input className={inputClass} placeholder={`Minecraft — ${form.serverName || 'server'}`} {...field('postTitle')} />
+                        <input className={inputClass} placeholder={`▶️ ${form.serverName || 'Minecraft server'} — Setup & join`} {...field('postTitle')} />
                     </Field>
                     <Field label="Use an existing forum post" hint="Optional. Right-click a post → Copy Link.">
                         <input className={inputClass} placeholder="https://discord.com/channels/.../..." {...field('existingPost')} />
@@ -128,6 +128,12 @@ const DiscordPage = () => {
                         onClick={() => act(() => api.post('/api/discord/sync', { force: true }), 'Messages refreshed.')}>
                         Refresh messages
                     </Button>
+                    {view.forum && view.postUrl && (
+                        <Button variant="secondary" disabled={working}
+                            onClick={() => act(() => api.post('/api/discord/new-post'), 'New setup post created; the old one now points to it.')}>
+                            Start a fresh setup post
+                        </Button>
+                    )}
                 </div>
 
                 {view.packUrl && (
