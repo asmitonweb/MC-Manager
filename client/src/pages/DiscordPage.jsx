@@ -69,10 +69,9 @@ const DiscordPage = () => {
         <Panel title="Discord" icon={MessageCircle} className="h-full">
             <div className="space-y-5 max-w-3xl">
                 <p className="text-sm text-slate-400">
-                    The setup channel gets a player guide (one command to paste, then pick the launcher entry) and a live server
-                    card. In a forum channel it is one post with the guide on top. World switches and mod updates go to the updates
-                    channel when you add one: each becomes its own post there, kept as a history. Without it, only the latest
-                    change is shown in the setup post.
+                    The setup post holds the player guide (one command to paste, then pick the launcher entry) and a live server
+                    card. World switches and mod updates are kept apart as a history: in a forum they get their own Updates post
+                    in the same forum, or they go to a second channel if you add its webhook below.
                 </p>
                 {error && <Notice tone="error">{error}</Notice>}
                 {notice && <Notice tone="success">{notice}</Notice>}
@@ -108,7 +107,10 @@ const DiscordPage = () => {
                 </div>
                 {view.postUrl && (
                     <p className="text-sm text-slate-400">
-                        Forum post: <a href={view.postUrl} target="_blank" rel="noreferrer" className="text-cyan-400 underline">open in Discord</a>
+                        Setup post: <a href={view.postUrl} target="_blank" rel="noreferrer" className="text-cyan-400 underline">open in Discord</a>
+                        {view.updatesPostUrl && (
+                            <> · Updates post: <a href={view.updatesPostUrl} target="_blank" rel="noreferrer" className="text-cyan-400 underline">open in Discord</a></>
+                        )}
                     </p>
                 )}
                 <label className="flex items-center gap-2 text-sm text-slate-300">

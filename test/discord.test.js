@@ -160,20 +160,23 @@ test('a deleted message is reposted', async () => {
     assert.equal(discord.settings().statusMessageId, '3');
 });
 
-test('forum channels: the guide opens a new post and everything else goes into it', async () => {
+test('forum channels: the guide opens the setup post, and updates get a post of their own', async () => {
     const { discord, requests, addMod, minecraft } = setup({ forum: true });
     addMod('aot', "Danny's AOT", '2.5.1.1', 'required');
     await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000', serverName: 'Closed Room' });
     await discord.sync();
-    // A plain post is rejected (220001), so a titled post is created and the card goes into it.
+    // A plain post is rejected (220001), so a titled post is created and the card goes into it;
+    // then a second post is opened for updates.
     assert.deepEqual(requests.map((r) => [r.method, Boolean(r.body.thread_name), r.threadId]), [
-        ['POST', false, null], ['POST', true, null], ['POST', false, 'thread-1'],
+        ['POST', false, null], ['POST', true, null], ['POST', false, 'thread-1'], ['POST', true, null],
     ]);
+    assert.equal(requests[3].body.thread_name, '📢 Closed Room — Updates');
     assert.equal(requests[1].body.thread_name, 'Minecraft — Closed Room');
     const view = discord.publicView();
     assert.equal(view.forum, true);
     assert.equal(view.threadId, 'thread-1');
     assert.equal(view.postUrl, 'https://discord.com/channels/guild/thread-1');
+    assert.equal(view.updatesPostUrl, 'https://discord.com/channels/guild/thread-3');
 
     requests.length = 0;
     minecraft.status = 'OFFLINE';
@@ -184,7 +187,9 @@ test('forum channels: the guide opens a new post and everything else goes into i
     addMod('geckolib', 'GeckoLib', '4.9.3', 'required');
     await discord.sync();
     const notice = requests.find((r) => r.body.content);
-    assert.equal(notice.threadId, 'thread-1');
+    assert.equal(notice.threadId, 'thread-3', 'updates go to the updates post');
+    assert.ok(!requests.some((r) => r.method === 'DELETE'), 'updates are kept as a history');
+    assert.ok(!('title' in notice.body));
 });
 
 test('forum channels: a deleted post is recreated', async () => {
@@ -209,7 +214,7 @@ test('an existing forum post can be reused from its link', async () => {
     await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000', existingPost: 'https://discord.com/channels/111111111111111111/222222222222222222' });
     await discord.sync();
     assert.deepEqual(requests.map((r) => [r.method, r.threadId, Boolean(r.body.thread_name)]), [
-        ['POST', '222222222222222222', false], ['POST', '222222222222222222', false],
+        ['POST', '222222222222222222', false], ['POST', '222222222222222222', false], ['POST', null, true],
     ]);
     assert.equal(discord.publicView().postUrl, 'https://discord.com/channels/111111111111111111/222222222222222222');
 });
@@ -296,4 +301,16 @@ test('with an updates channel, changes go there as a history and leave the setup
     const next = requests.filter((r) => r.url.startsWith(UPDATES));
     assert.deepEqual(next.map((r) => Boolean(r.body.thread_name)), [true], 'remembers it is a forum');
     assert.ok(!requests.some((r) => r.method === 'DELETE'), 'updates are kept as a history');
+});
+
+test('forum channels: an old notice in the setup post is removed once updates have their own post', async () => {
+    const { discord, requests, state } = setup({ forum: true });
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000' });
+    await discord.sync();
+    // A notice left in the setup post by an older version.
+    state.update((draft) => { draft.discord.noticeMessageId = '77'; });
+    requests.length = 0;
+    await discord.sync();
+    assert.ok(requests.some((r) => r.method === 'DELETE' && r.url.includes('/messages/77') && r.threadId === 'thread-1'));
+    assert.equal(discord.settings().noticeMessageId, null);
 });
