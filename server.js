@@ -4,7 +4,6 @@ const path = require('path');
 const fs = require('fs');
 const { Server } = require('socket.io');
 const cookieParser = require('cookie-parser');
-const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const config = require('./lib/config');
 require('./lib/logfile').attachLogFile(process.env.MANAGER_LOG_FILE);
@@ -28,6 +27,7 @@ const { ClientSync } = require('./lib/client-sync');
 const { LogEvents } = require('./lib/log-events');
 const { Roster } = require('./lib/roster');
 const { SystemInfo, parseTickQuery } = require('./lib/system-info');
+const { MapControl } = require('./lib/map-control');
 const mojang = require('./lib/installer/mojang');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
@@ -69,6 +69,7 @@ discord.clientSync = clientSync;
 const logEvents = new LogEvents({ minecraft, requestsFile: path.join(config.DATA_DIR, 'join-requests.json') });
 const roster = new Roster({ config, minecraft, players, logEvents });
 const systemInfo = new SystemInfo({ config, state, minecraft });
+const mapControl = new MapControl({ config, state, minecraft, addons });
 const auth = createAuth(config.SESSION_SECRET);
 
 try {
@@ -94,22 +95,18 @@ const ADMIN_ROOM = 'admin_room';
 const STATS_ROOM = 'stats_room';
 const COMMS_ROOM = 'comms_room';
 const CONSOLE_ROOM = 'console_room';
+const MAP_ROOM = 'map_room';
 const roomSize = (room) => io.of('/').adapter.rooms.get(room)?.size || 0;
 
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'client/dist')));
 
-// BlueMap proxy (admin and user)
-app.use('/map', (req, res, next) => {
+// BlueMap files (admin and user), served from the active world's map folder.
+app.use('/map', (req, res) => {
     if (!auth.verify(req.cookies.auth_token)) return res.status(401).send('Unauthorized');
-    next();
-}, createProxyMiddleware({
-    target: config.MAP_TARGET,
-    changeOrigin: true,
-    pathRewrite: { '^/map': '' },
-    logLevel: 'error',
-}));
+    return mapControl.serve(req, res);
+});
 
 let shutdownInProgress = false;
 const shutdownManager = async () => {
@@ -124,7 +121,7 @@ const shutdownManager = async () => {
     setTimeout(() => process.exit(0), 3000).unref();
 };
 
-const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, setups, switcher, clientSync, roster, systemInfo, io, shutdownManager };
+const routeDeps = { config, auth, state, minecraft, operations, players, worlds, installer, backups, addons, discord, setups, switcher, clientSync, roster, systemInfo, mapControl, io, shutdownManager };
 app.use('/api', require('./routes/core')(routeDeps));
 app.use('/api/server', require('./routes/server-install')(routeDeps));
 app.use('/api/worlds', require('./routes/worlds')(routeDeps));
@@ -135,6 +132,7 @@ app.use('/api/setups', require('./routes/setups')(routeDeps));
 app.use('/api/client', require('./routes/client').adminRouter(routeDeps));
 app.use('/api/roster', require('./routes/roster')(routeDeps));
 app.use('/api/system', require('./routes/system')(routeDeps));
+app.use('/api/map', require('./routes/map')(routeDeps));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -210,6 +208,14 @@ logEvents.on('event', (event) => {
 });
 logEvents.on('requests', () => io.to(ADMIN_ROOM).emit('roster_changed'));
 
+// BlueMap follows the map room: render while watched, pause a minute after the last viewer leaves.
+const onRoomChange = (room) => {
+    if (room === MAP_ROOM) mapControl.setViewers(roomSize(MAP_ROOM));
+};
+io.of('/').adapter.on('join-room', onRoomChange);
+io.of('/').adapter.on('leave-room', onRoomChange);
+mapControl.onStatus = (view) => io.to(MAP_ROOM).emit('map_status', view);
+
 // One shared stats sampler; only samples while someone has the System page open.
 // Tick timing (RCON `tick query`) is sampled every other round.
 let statsRound = 0;
@@ -273,6 +279,13 @@ io.on('connection', (socket) => {
         socket.emit('log_history', minecraft.logBuffer);
     });
     socket.on('console_unsubscribe', () => socket.leave(CONSOLE_ROOM));
+
+    // Any role may watch the map; BlueMap renders only while someone does.
+    socket.on('map_subscribe', () => {
+        socket.join(MAP_ROOM);
+        socket.emit('map_status', mapControl.view());
+    });
+    socket.on('map_unsubscribe', () => socket.leave(MAP_ROOM));
 
     socket.on('command', async (command) => {
         if (!isAdmin || typeof command !== 'string' || !command.trim()) return;
