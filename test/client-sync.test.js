@@ -307,7 +307,8 @@ test('a dependency is stepped back to the version its dependent requires (Iris 1
     const files = {
         'https://cdn.modrinth.com/s.zip': null,
         'https://cdn.modrinth.com/iris.jar': jar('iris', '1.8.8+mc1.21.1', { sodium: ['0.6.x'] }),
-        'https://cdn.modrinth.com/sodium.jar': jar('sodium', '0.8.13+mc1.21.1'),
+        // The newest Sodium refuses this Iris; the older one is fine with it.
+        'https://cdn.modrinth.com/sodium.jar': { id: 'sodium', version: '0.8.13+mc1.21.1', depends: {}, breaks: { iris: '<1.9' } },
         'https://cdn.modrinth.com/sodium-0.6.jar': jar('sodium', '0.6.13+mc1.21.1'),
     };
     ctx.clientSync.download = async (url, dest) => {
