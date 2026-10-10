@@ -219,7 +219,8 @@ test('player endpoints need the token and serve the setup files', async () => {
         assert.ok(cmdText.includes('##MCM-SCRIPT\r\n# '), 'script embedded after the marker');
         assert.ok(cmdText.includes(`$Token = '${TOKEN}'`));
         assert.equal(ctx.clientSync.setupCommand('http://h:3000', TOKEN),
-            `$f="$env:TEMP\\ClosedRoom-Setup.cmd"; iwr http://h:3000/client/${TOKEN}/ClosedRoom-Setup.cmd -UseBasicParsing -OutFile $f; & $f`);
+            `powershell -NoProfile -Command "cd ([IO.Path]::GetTempPath()); iwr http://h:3000/client/${TOKEN}/ClosedRoom-Setup.cmd -UseBasicParsing -OutFile ClosedRoom-Setup.cmd; .\\ClosedRoom-Setup.cmd"`);
+        assert.ok(!ctx.clientSync.setupCommand('http://h:3000', TOKEN).includes('$'), 'nothing for PowerShell to expand');
         assert.equal((await fetch(`${base}/client/${TOKEN}/file/fabric-1.21.1/mods/server-only.jar`)).status, 404);
         assert.equal(await (await fetch(`${base}/client/${TOKEN}/file/fabric-1.21.1/mods/aot.jar`)).text(), 'aot-jar');
     } finally {
@@ -347,6 +348,67 @@ test('the agent switches an echoing voice chat setup to push-to-talk once', { sk
         fs.writeFileSync(voiceFile, 'microphone_activation_type=VOICE\nmicrophone=\n');
         await run();
         assert.equal(fs.readFileSync(voiceFile, 'utf8'), 'microphone_activation_type=VOICE\nmicrophone=\n');
+    } finally {
+        server.close();
+    }
+});
+
+// A minimal servers.dat: { servers: [{ ip, name }, ...] }.
+const serversDat = (entries) => {
+    const str = (s) => { const b = Buffer.from(s, 'utf8'); const l = Buffer.alloc(2); l.writeUInt16BE(b.length); return Buffer.concat([l, b]); };
+    const count = Buffer.alloc(4);
+    count.writeInt32BE(entries.length);
+    const parts = [Buffer.from([10]), str(''), Buffer.from([9]), str('servers'), Buffer.from([10]), count];
+    for (const e of entries) parts.push(Buffer.from([8]), str('ip'), str(e.ip), Buffer.from([8]), str('name'), str(e.name), Buffer.from([0]));
+    parts.push(Buffer.from([0]));
+    return Buffer.concat(parts);
+};
+const serverIps = (buf) => {
+    const out = [];
+    for (let i = buf.indexOf('\x08\x00\x02ip'); i >= 0; i = buf.indexOf('\x08\x00\x02ip', i + 1)) out.push(buf.slice(i + 7, i + 7 + buf.readUInt16BE(i + 5)).toString());
+    return out;
+};
+
+test('the agent keeps one server entry and points players at the new world after a switch', { skip: !hasJava && 'needs java and client-agent/dist/agent.jar' }, async () => {
+    const ctx = setup();
+    ctx.manifest.update((draft) => {
+        for (const mod of draft.mods) {
+            mod.downloadUrl = null;
+            mod.provider = 'local';
+        }
+    });
+    // The server moved on to another world; the player still has the 1.21.1 entry.
+    ctx.setups.parkActive();
+    ctx.setups.register({ loader: 'fabric', minecraftVersion: '26.3', loaderVersion: '0.19.5' });
+    const server = await listen(ctx);
+    const player = fs.mkdtempSync(path.join(os.tmpdir(), 'mcm-player-'));
+    const clientRoot = path.join(player, '.closedroom');
+    const game = path.join(player, '.minecraft');
+    fs.mkdirSync(clientRoot, { recursive: true });
+    fs.mkdirSync(game, { recursive: true });
+    fs.writeFileSync(path.join(clientRoot, 'client.properties'), `base=http://127.0.0.1:${server.address().port}\ntoken=${TOKEN}\nslug=closedroom\n`);
+    // Added by hand without the port, then again by an older setup, next to another server.
+    fs.writeFileSync(path.join(game, 'servers.dat'), serversDat([
+        { ip: '100.64.0.10', name: 'Our server' },
+        { ip: 'play.example.com', name: 'Other' },
+        { ip: '100.64.0.10:25565', name: 'Closed Room — Attack on Titan' },
+    ]));
+    const run = () => new Promise((resolve, reject) => {
+        require('child_process').execFile('java', [`-Dmcmanager.root=${clientRoot}`, '-Dmcmanager.noDialog=true', '-jar', AGENT_JAR, 'fabric-1.21.1', game], { timeout: 60000 }, (error, stdout) => (error ? reject(error) : resolve(stdout)));
+    });
+    try {
+        const out = await run();
+        assert.deepEqual(serverIps(fs.readFileSync(path.join(game, 'servers.dat'))), ['100.64.0.10:25565', 'play.example.com'], out);
+        assert.match(out, /not the server's current world/);
+        assert.equal(fs.readFileSync(path.join(clientRoot, 'active.txt'), 'utf8').trim(), 'fabric-26.3');
+        const profiles = JSON.parse(fs.readFileSync(path.join(game, 'launcher_profiles.json'), 'utf8')).profiles;
+        assert.equal(Object.keys(profiles).length, 2, 'one entry per setup');
+        assert.ok(profiles['closedroom-fabric-26.3'].lastUsed >= profiles['closedroom-fabric-1.21.1'].lastUsed, 'the new world is preselected');
+        // Running again changes nothing and adds nothing.
+        const before = fs.readFileSync(path.join(game, 'servers.dat'));
+        await run();
+        assert.deepEqual(fs.readFileSync(path.join(game, 'servers.dat')), before);
+        assert.equal(Object.keys(JSON.parse(fs.readFileSync(path.join(game, 'launcher_profiles.json'), 'utf8')).profiles).length, 2);
     } finally {
         server.close();
     }

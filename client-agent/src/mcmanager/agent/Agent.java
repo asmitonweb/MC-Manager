@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * Also runnable directly for testing: java -jar agent.jar <setupId> [gameDir]
  */
 public final class Agent {
-    static final String VERSION = "3";
+    static final String VERSION = "4";
     static final List<String> SHARED_KINDS = List.of("shaderpacks", "resourcepacks");
     static final Pattern SAFE_NAME = Pattern.compile("^[^\\\\/:*?\"<>|\\x00-\\x1f]+$");
 
@@ -192,6 +192,49 @@ public final class Agent {
             if (voice) fixVoiceEcho();
         }
         saveHashCache();
+
+        // 6. The server switched worlds: preselect the new entry once, and warn
+        //    a player who started an entry that can no longer join.
+        Setup active = setups.values().stream().filter(Setup::active).findFirst().orElse(null);
+        if (active == null) return;
+        Path activeFile = root.resolve("active.txt");
+        if (!active.id().equals(String.join("", readLines(activeFile)).trim())) {
+            touchProfile(game.resolve("launcher_profiles.json"), active.vid());
+            writeLines(activeFile, List.of(active.id()));
+        }
+        if (current != null && !current.active()) {
+            log("this entry is not the server's current world; the server is on " + active.label());
+            if (askToSwitch(current, active, serverName)) {
+                touchProfile(game.resolve("launcher_profiles.json"), active.vid());
+                log("closing so the player can start " + active.label());
+                log.close();
+                System.exit(0);
+            }
+        }
+    }
+
+    /**
+     * Asks whether to close the game and start the right entry. The window
+     * runs in its own short-lived process, so the game's graphics never share
+     * a process with it. Returns false (play on) when no window can be shown.
+     */
+    boolean askToSwitch(Setup current, Setup active, String serverName) {
+        if (Boolean.getBoolean("mcmanager.noDialog") || !System.getProperty("os.name", "").startsWith("Windows")) return false;
+        try {
+            Path self = Paths.get(Agent.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            Path javaw = Paths.get(System.getProperty("java.home"), "bin", "javaw.exe");
+            if (!Files.exists(javaw)) javaw = javaw.resolveSibling("java.exe");
+            Process dialog = new ProcessBuilder(javaw.toString(), "-cp", self.toString(), "mcmanager.agent.SwitchDialog",
+                serverName == null ? "The server" : serverName, current.label(), active.label()).start();
+            if (!dialog.waitFor(10, java.util.concurrent.TimeUnit.MINUTES)) {
+                dialog.destroy();
+                return false;
+            }
+            return dialog.exitValue() == 10;
+        } catch (Exception error) {
+            log("could not show the switch prompt: " + error);
+            return false;
+        }
     }
 
     /**
@@ -387,6 +430,26 @@ public final class Agent {
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         Files.writeString(tmp, text);
         move(tmp, file);
+    }
+
+    /** Marks an entry as just used, so launchers list and preselect it first. */
+    void touchProfile(Path file, String vid) {
+        try {
+            if (!Files.exists(file)) return;
+            String text = Files.readString(file);
+            int[] span = findProfileObject(text, vid);
+            if (span == null) return;
+            String old = text.substring(span[0], span[1] + 1);
+            String stamp = "\"lastUsed\": \"" + Instant.now() + "\"";
+            Matcher used = Pattern.compile("\"lastUsed\"\\s*:\\s*\"[^\"]*\"").matcher(old);
+            String obj = used.find() ? used.replaceFirst(Matcher.quoteReplacement(stamp)) : "{" + stamp + ", " + old.substring(1);
+            text = text.substring(0, span[0]) + obj + text.substring(span[1] + 1);
+            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+            Files.writeString(tmp, text);
+            move(tmp, file);
+        } catch (IOException error) {
+            log("could not preselect " + vid + ": " + error);
+        }
     }
 
     /** Start and end index of the profile object whose lastVersionId is vid, or null. */

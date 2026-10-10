@@ -138,7 +138,7 @@ const GameSyncPage = () => {
                         Players run this once. It adds a <span className="text-cyan-300">{data.brand.name}</span> entry per setup to TLauncher, SKLauncher and the official launcher.
                         After that, every press of Play syncs mods, shaders and resource packs, without touching the player&apos;s own files.
                     </p>
-                    <CopyField label="Paste into Terminal / PowerShell (recommended)" value={data.setupCommand} />
+                    <CopyField label="Paste into Terminal, PowerShell or cmd (recommended)" value={data.setupCommand} />
                     <CopyField label="Or download the setup file" value={data.setupUrl} />
                     <div className="grid md:grid-cols-[1fr_auto] gap-2 items-end">
                         <Field label="Launcher name" hint={`Entries show as "${clientName || data.brand.name} · <world>". Defaults to the first part of the Discord server name.`}>

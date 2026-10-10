@@ -45,7 +45,8 @@ const setup = ({ forum = false } = {}) => {
         if (threadId && deletedThreads.has(threadId)) return json({ code: 10003, message: 'Unknown Channel' }, 404);
         const match = /\/messages\/(\d+)/.exec(url);
         if (match && deleted.has(match[1])) return json({ code: 10008, message: 'Unknown Message' }, 404);
-        if (forum && !match && !threadId && !body.thread_name) {
+        const isForum = forum === true || (typeof forum === 'string' && url.startsWith(forum));
+        if (isForum && !match && !threadId && !body.thread_name) {
             return json({ code: 220001, message: 'Webhooks posted to forum channels must have a thread_name or thread_id' }, 400);
         }
         const id = match ? match[1] : String(nextId++);
@@ -234,7 +235,8 @@ test('with client sync, the guide links the one-click setup and notices name the
     assert.ok(guide.includes(`(http://100.64.0.10:3000/client/${token}/ClosedRoom-Setup.cmd)`));
     assert.ok(guide.includes(`iwr http://100.64.0.10:3000/client/${token}/ClosedRoom-Setup.cmd`));
     assert.match(guide, /pick \*\*Closed Room · Attack on Titan\*\*/);
-    assert.ok(requests[1].body.embeds[0].description.startsWith('**Setup (once):** paste in Terminal'));
+    assert.ok(requests[1].body.embeds[0].description.startsWith('**In your launcher pick:** Closed Room · Attack on Titan'));
+    assert.ok(!requests[1].body.embeds[0].description.includes('iwr'), 'the command lives in the guide only');
     assert.ok(guide.indexOf('Terminal') < guide.indexOf('[⬇️'), 'command comes before the file link');
     assert.ok(!guide.includes('Win + R'));
 
@@ -260,4 +262,38 @@ test('a new change notice replaces the previous one', async () => {
     await discord.sync();
     assert.ok(requests.some((r) => r.method === 'DELETE' && r.url.includes(`/messages/${first}`)), 'old notice deleted');
     assert.notEqual(discord.settings().noticeMessageId, first);
+});
+
+test('with an updates channel, changes go there as a history and leave the setup post', async () => {
+    const UPDATES = 'https://discord.com/api/webhooks/456/upd-XYZ_2';
+    const { discord, requests, addMod } = setup({ forum: UPDATES });
+    addMod('aot', "Danny's AOT", '1', 'required');
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000' });
+    await discord.sync();
+    addMod('aot', "Danny's AOT", '2', 'required');
+    await discord.sync();
+    const oldNotice = discord.settings().noticeMessageId;
+    assert.ok(oldNotice, 'without an updates channel the notice sits in the setup post');
+
+    await assert.rejects(discord.update({ updatesWebhookUrl: 'https://example.com/x' }), /webhook/i);
+    await discord.update({ updatesWebhookUrl: UPDATES });
+    assert.equal(discord.publicView().updatesWebhookConfigured, true);
+    assert.ok(!JSON.stringify(discord.publicView()).includes('upd-XYZ_2'), 'webhook never returned in full');
+    requests.length = 0;
+    addMod('aot', "Danny's AOT", '3', 'required');
+    await discord.sync();
+    const toUpdates = requests.filter((r) => r.url.startsWith(UPDATES));
+    // A forum channel: the plain post is refused, then each change becomes a titled post.
+    assert.deepEqual(toUpdates.map((r) => Boolean(r.body.thread_name)), [false, true]);
+    assert.equal(toUpdates[1].body.thread_name, '🔄 Mods updated · Attack on Titan');
+    assert.ok(!('title' in toUpdates[1].body));
+    assert.ok(requests.some((r) => r.method === 'DELETE' && r.url.startsWith(WEBHOOK) && r.url.includes(`/messages/${oldNotice}`)), 'old notice removed from the setup post');
+    assert.equal(discord.settings().noticeMessageId, null);
+
+    requests.length = 0;
+    addMod('aot', "Danny's AOT", '4', 'required');
+    await discord.sync();
+    const next = requests.filter((r) => r.url.startsWith(UPDATES));
+    assert.deepEqual(next.map((r) => Boolean(r.body.thread_name)), [true], 'remembers it is a forum');
+    assert.ok(!requests.some((r) => r.method === 'DELETE'), 'updates are kept as a history');
 });

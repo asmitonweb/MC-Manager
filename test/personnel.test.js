@@ -121,3 +121,19 @@ test('tick query output is parsed into MSPT and TPS', () => {
     assert.deepEqual(parseTickQuery('Target tick rate: 20.0 per second.\nAverage time per tick: 80.0ms (Target: 50.0ms)'), { mspt: 80, tps: 12.5, frozen: false });
     assert.equal(parseTickQuery('Unknown command'), null);
 });
+
+const { motdFor } = require('../lib/motd');
+
+test('the motd keeps the admin line and names the running world', () => {
+    const next = motdFor('Closed Room Incorporated', { worldName: 'Attack on Titan', loader: 'fabric', minecraftVersion: '1.21.1' });
+    // server.properties escapes as written in the file: backslash + n, backslash + uXXXX.
+    const bs = String.fromCharCode(92);
+    const sect = `${bs}u00A7`;
+    assert.equal(next, `Closed Room Incorporated${bs}n${sect}7Now playing: ${sect}aAttack on Titan ${sect}7${bs}u00B7 Fabric 1.21.1`);
+    // Switching again replaces line 2 instead of adding another.
+    const again = motdFor(next, { worldName: 'Old World', loader: 'fabric', minecraftVersion: '26.3' });
+    assert.ok(again.startsWith(String.raw`Closed Room Incorporated\n`));
+    assert.equal(again.split(String.raw`\n`).length, 2);
+    assert.match(again, /Old World/);
+    assert.ok(/^[\x20-\x7e]*$/.test(again), 'ASCII only');
+});

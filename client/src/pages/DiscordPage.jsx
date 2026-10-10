@@ -17,6 +17,7 @@ const DiscordPage = () => {
             setView(data);
             setForm({
                 webhookUrl: '',
+                updatesWebhookUrl: '',
                 baseUrl: data.baseUrl || data.suggested?.baseUrl || '',
                 gameAddress: data.gameAddress || data.suggested?.gameAddress || '',
                 inviteUrl: data.inviteUrl,
@@ -50,7 +51,7 @@ const DiscordPage = () => {
 
     const save = () => act(async () => {
         const saved = await api.put('/api/discord', form);
-        setForm({ ...form, webhookUrl: '', existingPost: '' });
+        setForm({ ...form, webhookUrl: '', updatesWebhookUrl: '', existingPost: '' });
         return saved;
     }, 'Saved. Discord updates within a few seconds.');
 
@@ -68,18 +69,24 @@ const DiscordPage = () => {
         <Panel title="Discord" icon={MessageCircle} className="h-full">
             <div className="space-y-5 max-w-3xl">
                 <p className="text-sm text-slate-400">
-                    MC Manager keeps a player guide (Tailscale, Fabric, mods, address) and a server card (status, world, mod list,
-                    one-click mod download) up to date, and posts a short notice when mods change. In a forum channel it creates one
-                    post: the guide opens it and the card and notices live inside it. In a text channel, pin both messages.
+                    The setup channel gets a player guide (one command to paste, then pick the launcher entry) and a live server
+                    card. In a forum channel it is one post with the guide on top. World switches and mod updates go to the updates
+                    channel when you add one: each becomes its own post there, kept as a history. Without it, only the latest
+                    change is shown in the setup post.
                 </p>
                 {error && <Notice tone="error">{error}</Notice>}
                 {notice && <Notice tone="success">{notice}</Notice>}
                 {view.lastError && <Notice tone="warn">Last sync failed: {view.lastError}</Notice>}
 
-                <Field label="Webhook URL" hint={view.webhookConfigured
+                <Field label="Setup channel webhook" hint={view.webhookConfigured
                     ? `Configured (${view.webhookUrl}). Paste a new one to replace it.`
                     : 'Discord: channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.'}>
                     <input className={inputClass} type="password" autoComplete="off" placeholder="https://discord.com/api/webhooks/..." {...field('webhookUrl')} />
+                </Field>
+                <Field label="Updates channel webhook (optional)" hint={view.updatesWebhookConfigured
+                    ? `Configured (${view.updatesWebhookUrl}). Paste a new one to replace it, or - to remove it.`
+                    : 'A second channel or forum for world switches and mod updates.'}>
+                    <input className={inputClass} type="password" autoComplete="off" placeholder="https://discord.com/api/webhooks/..." {...field('updatesWebhookUrl')} />
                 </Field>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Field label="Server name"><input className={inputClass} {...field('serverName')} /></Field>

@@ -35,25 +35,42 @@ final class ServersDat {
         Tag serversTag = root.get("servers");
         List<Object> servers = serversTag != null && serversTag.value() instanceof ListTag list ? list.items() : new ArrayList<>();
 
-        for (Object item : servers) {
+        // Our server is the entry with its address (with or without the default
+        // port) or its name. The first one is kept up to date; copies are removed.
+        String wanted = normalize(address);
+        Map<String, Tag> ours = null;
+        boolean changed = false;
+        for (java.util.Iterator<Object> it = servers.iterator(); it.hasNext();) {
             @SuppressWarnings("unchecked")
-            Map<String, Tag> server = (Map<String, Tag>) item;
-            Tag ip = server.get("ip");
-            Tag label = server.get("name");
-            boolean sameIp = ip != null && address.equalsIgnoreCase(String.valueOf(ip.value()));
-            boolean sameName = label != null && name.equals(String.valueOf(label.value()));
-            if (!sameIp && !sameName) continue;
-            if (sameIp && sameName) return;
-            server.put("ip", new Tag((byte) 8, address));
-            server.put("name", new Tag((byte) 8, name));
-            write(file, root, servers);
-            return;
+            Map<String, Tag> server = (Map<String, Tag>) it.next();
+            String ip = server.get("ip") == null ? "" : String.valueOf(server.get("ip").value());
+            String label = server.get("name") == null ? "" : String.valueOf(server.get("name").value());
+            if (!normalize(ip).equals(wanted) && !label.equals(name)) continue;
+            if (ours != null) {
+                it.remove();
+                changed = true;
+                continue;
+            }
+            ours = server;
+            if (!ip.equals(address) || !label.equals(name)) {
+                server.put("ip", new Tag((byte) 8, address));
+                server.put("name", new Tag((byte) 8, name));
+                changed = true;
+            }
         }
-        Map<String, Tag> entry = new LinkedHashMap<>();
-        entry.put("ip", new Tag((byte) 8, address));
-        entry.put("name", new Tag((byte) 8, name));
-        servers.add(0, entry);
-        write(file, root, servers);
+        if (ours == null) {
+            Map<String, Tag> entry = new LinkedHashMap<>();
+            entry.put("ip", new Tag((byte) 8, address));
+            entry.put("name", new Tag((byte) 8, name));
+            servers.add(0, entry);
+            changed = true;
+        }
+        if (changed) write(file, root, servers);
+    }
+
+    static String normalize(String address) {
+        String a = address.trim().toLowerCase(java.util.Locale.ROOT);
+        return a.endsWith(":25565") ? a.substring(0, a.length() - 6) : a;
     }
 
     private static void write(Path file, Map<String, Tag> root, List<Object> servers) throws IOException {

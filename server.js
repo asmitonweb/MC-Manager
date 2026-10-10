@@ -28,6 +28,7 @@ const { LogEvents } = require('./lib/log-events');
 const { Roster } = require('./lib/roster');
 const { SystemInfo, parseTickQuery } = require('./lib/system-info');
 const { MapControl } = require('./lib/map-control');
+const { updateMotd } = require('./lib/motd');
 const mojang = require('./lib/installer/mojang');
 
 fs.mkdirSync(config.DATA_DIR, { recursive: true });
@@ -46,6 +47,12 @@ const players = new PlayerTracker({
 });
 const metrics = new Metrics({ getMinecraftPid: () => minecraft.process?.pid });
 const worlds = new WorldManager({ config, state, minecraft });
+// The Multiplayer list shows which world is running, so players on an old entry see the switch.
+minecraft.beforeStart = () => {
+    const { profile, worlds: list = [], activeWorldId } = state.get();
+    const world = list.find((entry) => entry.id === activeWorldId);
+    updateMotd(config.PROPERTIES_FILE, { worldName: world?.name, loader: profile?.loader, minecraftVersion: profile?.minecraftVersion });
+};
 const installer = new ServerInstaller({ config, state, minecraft, operations, worlds });
 const backups = new BackupManager({ config, state, minecraft, worlds, operations });
 const addons = new AddonManager({
