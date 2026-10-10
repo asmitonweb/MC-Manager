@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * Also runnable directly for testing: java -jar agent.jar <setupId> [gameDir]
  */
 public final class Agent {
-    static final String VERSION = "2";
+    static final String VERSION = "3";
     static final List<String> SHARED_KINDS = List.of("shaderpacks", "resourcepacks");
     static final Pattern SAFE_NAME = Pattern.compile("^[^\\\\/:*?\"<>|\\x00-\\x1f]+$");
 
@@ -187,8 +187,55 @@ public final class Agent {
         if (current != null) {
             List<Entry> shaders = files.stream().filter(e -> e.setup().equals(setupId) && e.kind().equals("shaderpacks")).toList();
             if (shaders.size() == 1) selectShader(shaders.get(0).name());
+            boolean voice = files.stream().anyMatch(e -> e.setup().equals(setupId) && e.kind().equals("mods")
+                && e.name().toLowerCase(Locale.ROOT).startsWith("voicechat"));
+            if (voice) fixVoiceEcho();
         }
         saveHashCache();
+    }
+
+    /**
+     * Simple Voice Chat has no echo cancellation: with speakers and voice
+     * activation, a player's mic sends everyone's voice straight back to them.
+     * Once per player, an existing voice setup is switched to push-to-talk
+     * (Caps Lock by default; they can switch back in the voice settings). A
+     * "Stereo Mix" style loopback device picked as the microphone sends all
+     * game sound out, so it is always reset to the default microphone.
+     */
+    void fixVoiceEcho() {
+        Path file = game.resolve("config").resolve("voicechat").resolve("voicechat-client.properties");
+        Path marker = root.resolve("voice-ptt-applied.txt");
+        try {
+            if (!Files.exists(file)) {
+                // New players choose push-to-talk or voice activation in the mod's first-run screen.
+                if (!Files.exists(marker)) Files.writeString(marker, "new player\n");
+                return;
+            }
+            boolean once = !Files.exists(marker);
+            List<String> lines = new ArrayList<>(Files.readAllLines(file, StandardCharsets.UTF_8));
+            boolean changed = false;
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i);
+                if (once && line.equals("microphone_activation_type=VOICE")) {
+                    lines.set(i, "microphone_activation_type=PTT");
+                    log("voice chat switched to push-to-talk (stops echo through speakers)");
+                    changed = true;
+                } else if (line.startsWith("microphone=") && isLoopbackDevice(line.substring(11))) {
+                    lines.set(i, "microphone=");
+                    log("voice chat microphone was a loopback device (" + line.substring(11) + "); using the default microphone");
+                    changed = true;
+                }
+            }
+            if (changed) writeLines(file, lines);
+            if (once) Files.writeString(marker, "applied\n");
+        } catch (IOException error) {
+            log("voice chat settings not checked: " + error);
+        }
+    }
+
+    static boolean isLoopbackDevice(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        return n.contains("stereo mix") || n.contains("what u hear") || n.contains("wave out mix") || n.contains("loopback");
     }
 
     /**

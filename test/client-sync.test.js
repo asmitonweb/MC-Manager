@@ -116,6 +116,17 @@ test('manifest lists client mods with CDN and manager URLs, and skips server-onl
     assert.doesNotMatch(text, /server-only/);
 });
 
+test('a client extra the server also runs is sent once, as the server copy', () => {
+    const { clientSync } = setup();
+    fs.mkdirSync(clientSync.extrasDir('fabric-1.21.1', 'mods'), { recursive: true });
+    fs.writeFileSync(path.join(clientSync.extrasDir('fabric-1.21.1', 'mods'), 'fabric-api-old.jar'), 'old');
+    clientSync.extras.update((draft) => {
+        draft.setups['fabric-1.21.1'] = { files: [{ kind: 'mods', provider: 'modrinth', projectId: 'P7dR8mSH', fileName: 'fabric-api-old.jar', explicit: true }] };
+    });
+    const names = clientSync.filesFor('fabric-1.21.1').map((file) => `${file.name}:${file.source}`);
+    assert.deepEqual(names, ['aot.jar:server', 'fabric-api.jar:server']);
+});
+
 test('parked setups are included with their own mods', async () => {
     const ctx = setup();
     ctx.setups.parkActive();
@@ -302,6 +313,40 @@ test('the agent syncs a player folder against the manager', { skip: !hasJava && 
         const offline = await run();
         assert.match(offline, /server unreachable/);
         assert.deepEqual(fs.readdirSync(path.join(clientRoot, 'instances', 'fabric-1.21.1', 'mods')).sort(), ['aot.jar', 'fabric-api.jar']);
+    } finally {
+        server.close();
+    }
+});
+
+test('the agent switches an echoing voice chat setup to push-to-talk once', { skip: !hasJava && 'needs java and client-agent/dist/agent.jar' }, async () => {
+    const ctx = setup();
+    fs.writeFileSync(path.join(ctx.modsDir, 'voicechat-fabric-1.21.1-2.6.22.jar'), 'voice');
+    ctx.manifest.update((draft) => {
+        draft.mods.push({ provider: 'local', title: 'Simple Voice Chat', clientSide: 'required', fileName: 'voicechat-fabric-1.21.1-2.6.22.jar', sha512: sha('sha512', 'voice') });
+        for (const mod of draft.mods) {
+            mod.downloadUrl = null;
+            mod.provider = 'local';
+        }
+    });
+    const server = await listen(ctx);
+    const player = fs.mkdtempSync(path.join(os.tmpdir(), 'mcm-player-'));
+    const clientRoot = path.join(player, '.closedroom');
+    const game = path.join(player, '.minecraft');
+    const voiceFile = path.join(game, 'config', 'voicechat', 'voicechat-client.properties');
+    fs.mkdirSync(path.dirname(voiceFile), { recursive: true });
+    fs.mkdirSync(clientRoot, { recursive: true });
+    fs.writeFileSync(path.join(clientRoot, 'client.properties'), `base=http://127.0.0.1:${server.address().port}\ntoken=${TOKEN}\nslug=closedroom\n`);
+    fs.writeFileSync(voiceFile, '# comment\nmicrophone_activation_type=VOICE\nmicrophone=Stereo Mix (Realtek(R) Audio)\ndenoiser=true\n');
+    const run = () => new Promise((resolve, reject) => {
+        require('child_process').execFile('java', [`-Dmcmanager.root=${clientRoot}`, '-jar', AGENT_JAR, 'fabric-1.21.1', game], { timeout: 60000 }, (error, stdout) => (error ? reject(error) : resolve(stdout)));
+    });
+    try {
+        const out = await run();
+        assert.equal(fs.readFileSync(voiceFile, 'utf8').replace(/\r/g, ''), '# comment\nmicrophone_activation_type=PTT\nmicrophone=\ndenoiser=true\n', out);
+        // The player chose voice activation again: that choice is kept from now on.
+        fs.writeFileSync(voiceFile, 'microphone_activation_type=VOICE\nmicrophone=\n');
+        await run();
+        assert.equal(fs.readFileSync(voiceFile, 'utf8'), 'microphone_activation_type=VOICE\nmicrophone=\n');
     } finally {
         server.close();
     }
