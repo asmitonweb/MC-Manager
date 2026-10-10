@@ -186,14 +186,47 @@ public final class Agent {
         }
         if (current != null) {
             List<Entry> shaders = files.stream().filter(e -> e.setup().equals(setupId) && e.kind().equals("shaderpacks")).toList();
-            Path iris = game.resolve("config").resolve("iris.properties");
-            if (shaders.size() == 1 && !Files.exists(iris)) {
-                Files.createDirectories(iris.getParent());
-                Files.writeString(iris, "enableShaders=true\nshaderPack=" + shaders.get(0).name() + "\n");
-                log("selected shader " + shaders.get(0).name());
-            }
+            if (shaders.size() == 1) selectShader(shaders.get(0).name());
         }
         saveHashCache();
+    }
+
+    /**
+     * Picks our shader for Iris when the player has none selected, or when the
+     * selected pack is missing or not a shader pack (Iris then silently renders
+     * without shaders). A working pack the player chose, or shaders they turned
+     * off, are left alone. Other Iris settings are kept.
+     */
+    void selectShader(String ours) throws IOException {
+        if (!isShaderPack(game.resolve("shaderpacks").resolve(ours))) return; // ours didn't download
+        Path iris = game.resolve("config").resolve("iris.properties");
+        Properties props = new Properties();
+        if (Files.exists(iris)) {
+            try (InputStream in = Files.newInputStream(iris)) {
+                props.load(in);
+            }
+        }
+        String current = props.getProperty("shaderPack", "").trim();
+        if (!current.isEmpty() && isShaderPack(game.resolve("shaderpacks").resolve(current))) return;
+        if (!current.isEmpty()) log("shader pack " + current + " is missing or broken; switching to " + ours);
+        props.setProperty("shaderPack", ours);
+        props.setProperty("enableShaders", "true");
+        Files.createDirectories(iris.getParent());
+        try (OutputStream out = Files.newOutputStream(iris)) {
+            props.store(out, "Iris settings (shader selected by the server's game sync)");
+        }
+        log("selected shader " + ours);
+    }
+
+    /** A shader pack is a folder or zip that contains a shaders/ directory. */
+    static boolean isShaderPack(Path pack) {
+        if (Files.isDirectory(pack)) return Files.isDirectory(pack.resolve("shaders"));
+        if (!Files.isRegularFile(pack)) return false;
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(pack.toFile())) {
+            return zip.stream().anyMatch(entry -> entry.getName().startsWith("shaders/"));
+        } catch (IOException notAZip) {
+            return false;
+        }
     }
 
     void refreshVersions(Map<String, Setup> setups, String agentFile) throws IOException {

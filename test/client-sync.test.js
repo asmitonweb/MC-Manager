@@ -244,6 +244,17 @@ test('the agent syncs a player folder against the manager', { skip: !hasJava && 
     fs.writeFileSync(path.join(clientRoot, 'client.properties'), `base=${base}\ntoken=${TOKEN}\nslug=closedroom\n`);
     fs.writeFileSync(path.join(clientRoot, 'instances', 'fabric-1.21.1', 'mods', 'stale.jar'), 'old');
     fs.writeFileSync(path.join(game, 'shaderpacks', 'PlayersOwn.zip'), 'mine');
+    // A shader client extra, and Iris settings that point at a pack the player no longer has.
+    const shaderSrc = path.join(ctx.root, 'final.fsh');
+    fs.writeFileSync(shaderSrc, 'void main() {}');
+    const shaderZip = path.join(ctx.clientSync.extrasDir('fabric-1.21.1', 'shaderpacks'), 'Ours.zip');
+    await zipFiles([{ path: shaderSrc, name: 'shaders/final.fsh' }], shaderZip);
+    const shaderBytes = fs.readFileSync(shaderZip);
+    ctx.clientSync.extras.update((draft) => {
+        draft.setups['fabric-1.21.1'] = { files: [{ kind: 'shaderpacks', provider: 'local', projectId: 'sh', title: 'Ours', fileName: 'Ours.zip', sha512: sha('sha512', shaderBytes), explicit: true }] };
+    });
+    fs.mkdirSync(path.join(game, 'config'), { recursive: true });
+    fs.writeFileSync(path.join(game, 'config', 'iris.properties'), 'shaderPack=BSL_v10.1.3.zip\nenableShaders=true\ncolorSpace=SRGB\n');
     // An entry from an older setup (grass icon) that the player gave a custom resolution.
     fs.writeFileSync(path.join(game, 'launcher_profiles.json'), '{\n  "profiles": {\n    "abc": { "name": "Mine", "type": "custom" },\n    "4ba79b8d98744e899490c9adfa15997c": { "name": "old", "type": "custom", "lastVersionId": "closedroom-fabric-1.21.1", "icon": "Grass", "resolution": { "width": 854, "height": 480 } }\n  },\n  "version": 3\n}');
     const run = () => new Promise((resolve, reject) => {
@@ -254,6 +265,9 @@ test('the agent syncs a player folder against the manager', { skip: !hasJava && 
         const mods = fs.readdirSync(path.join(clientRoot, 'instances', 'fabric-1.21.1', 'mods')).sort();
         assert.deepEqual(mods, ['aot.jar', 'fabric-api.jar'], out);
         assert.ok(fs.existsSync(path.join(game, 'shaderpacks', 'PlayersOwn.zip')), 'player files untouched');
+        const iris = fs.readFileSync(path.join(game, 'config', 'iris.properties'), 'utf8');
+        assert.match(iris, /^shaderPack=Ours\.zip$/m, 'broken pack replaced with ours');
+        assert.match(iris, /^colorSpace=SRGB$/m, 'other Iris settings kept');
         const agentName = ctx.clientSync.agentInfo().fileName;
         assert.ok(fs.existsSync(path.join(clientRoot, agentName)), 'agent downloaded');
         const version = JSON.parse(fs.readFileSync(path.join(game, 'versions', 'closedroom-fabric-1.21.1', 'closedroom-fabric-1.21.1.json'), 'utf8'));
@@ -272,7 +286,11 @@ test('the agent syncs a player folder against the manager', { skip: !hasJava && 
         // Second run: nothing to download; a renamed world updates the profile name.
         ctx.state.update((draft) => { draft.worlds[0].name = 'Titans'; });
         ctx.clientSync.templates.clear();
+        // A working pack the player picked themselves is kept.
+        await zipFiles([{ path: shaderSrc, name: 'shaders/final.fsh' }], path.join(game, 'shaderpacks', 'Mine.zip'));
+        fs.writeFileSync(path.join(game, 'config', 'iris.properties'), 'shaderPack=Mine.zip\nenableShaders=false\n');
         const second = await run();
+        assert.equal(fs.readFileSync(path.join(game, 'config', 'iris.properties'), 'utf8'), 'shaderPack=Mine.zip\nenableShaders=false\n');
         assert.doesNotMatch(second, /\+ /);
         const again = JSON.parse(fs.readFileSync(path.join(game, 'launcher_profiles.json'), 'utf8'));
         assert.equal(Object.keys(again.profiles).length, 2);
