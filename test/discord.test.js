@@ -38,9 +38,10 @@ const setup = ({ forum = false } = {}) => {
     const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
     // Mimics a Discord webhook; in forum mode, posts need a thread_name or thread_id.
     const fetchImpl = async (url, options) => {
-        const body = JSON.parse(options.body);
+        const body = options.body ? JSON.parse(options.body) : {};
         const threadId = new URL(url).searchParams.get('thread_id');
         requests.push({ method: options.method, url, body, threadId });
+        if (options.method === 'DELETE') return new Response(null, { status: 204 });
         if (threadId && deletedThreads.has(threadId)) return json({ code: 10003, message: 'Unknown Channel' }, 404);
         const match = /\/messages\/(\d+)/.exec(url);
         if (match && deleted.has(match[1])) return json({ code: 10008, message: 'Unknown Message' }, 404);
@@ -222,6 +223,7 @@ test('with client sync, the guide links the one-click setup and notices name the
         agentInfo: () => ({ fileName: 'agent-x.jar' }),
         brand: () => ({ setupFile: 'ClosedRoom-Setup.cmd' }),
         label: () => 'Closed Room · Attack on Titan',
+        setupCommand: (base, token) => `powershell -c "iwr ${base}/client/${token}/ClosedRoom-Setup.cmd -OutFile x; & x"`,
     };
     addMod('aot', "Danny's AOT", '2.5.1.1', 'required');
     await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://100.64.0.10:3000' });
@@ -229,9 +231,10 @@ test('with client sync, the guide links the one-click setup and notices name the
     const token = discord.packToken();
     const guide = requests[0].body.embeds[0].description;
     assert.ok(guide.includes(`(http://100.64.0.10:3000/client/${token}/ClosedRoom-Setup.cmd)`));
-    assert.ok(guide.includes(`irm http://100.64.0.10:3000/client/${token}/setup.ps1|iex`));
+    assert.ok(guide.includes(`iwr http://100.64.0.10:3000/client/${token}/ClosedRoom-Setup.cmd`));
     assert.match(guide, /pick \*\*Closed Room · Attack on Titan\*\*/);
-    assert.match(requests[1].body.embeds[0].description, /One-click setup/);
+    assert.ok(requests[1].body.embeds[0].description.startsWith('**Setup (once):** Win + R'));
+    assert.ok(guide.indexOf('Win + R') < guide.indexOf('[⬇️'), 'command comes before the file link');
 
     requests.length = 0;
     addMod('geckolib', 'GeckoLib', '4.9.3', 'required');
@@ -239,4 +242,20 @@ test('with client sync, the guide links the one-click setup and notices name the
     const notice = requests.find((r) => r.method === 'POST' && r.body.content);
     assert.match(notice.body.content, /install automatically next time you press Play on \*\*Closed Room · Attack on Titan\*\*/);
     assert.doesNotMatch(notice.body.content, /replace your/);
+});
+
+test('a new change notice replaces the previous one', async () => {
+    const { discord, requests, addMod } = setup();
+    addMod('aot', "Danny's AOT", '1', 'required');
+    await discord.update({ webhookUrl: WEBHOOK, baseUrl: 'http://h:3000' });
+    await discord.sync();
+    addMod('aot', "Danny's AOT", '2', 'required');
+    await discord.sync();
+    const first = discord.settings().noticeMessageId;
+    assert.ok(first);
+    requests.length = 0;
+    addMod('aot', "Danny's AOT", '3', 'required');
+    await discord.sync();
+    assert.ok(requests.some((r) => r.method === 'DELETE' && r.url.includes(`/messages/${first}`)), 'old notice deleted');
+    assert.notEqual(discord.settings().noticeMessageId, first);
 });

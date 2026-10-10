@@ -25,8 +25,12 @@ test('log lines become chat, join, leave, advancement, death and refused events'
     assert.equal(LogEvents.parse(line('Eren left the game')).type, 'leave');
     assert.deepEqual(LogEvents.parse(line('Eren has made the advancement [Stone Age]')), { type: 'advancement', time: '12:00:01', name: 'Eren', message: 'Stone Age' });
     assert.deepEqual(LogEvents.parse(line('Eren was slain by Zombie'), known), { type: 'death', time: '12:00:01', name: 'Eren', message: 'was slain by Zombie' });
-    assert.equal(LogEvents.parse(line('Eren lost connection: Disconnected'), known), null);
-    assert.equal(LogEvents.parse(line('Eren[/100.64.0.5:5000] logged in with entity id 12 at (1, 2, 3)'), known), null);
+    assert.equal(LogEvents.parse(line('Eren lost connection: Disconnected'), known).type, 'leave');
+    assert.equal(LogEvents.parse(line('Eren[/100.64.0.5:5000] logged in with entity id 12 at (1, 2, 3)'), known).type, 'join');
+    // Minecraft 26.x prefixes chat-channel lines.
+    assert.deepEqual(LogEvents.parse(line('System chat: BurgerBandit joined the game')), { type: 'join', time: '12:00:01', name: 'BurgerBandit' });
+    assert.equal(LogEvents.parse(line('System chat: BurgerBandit left the game')).type, 'leave');
+    assert.equal(LogEvents.parse(line('System chat: Eren was slain by Zombie'), known).type, 'death');
     assert.equal(LogEvents.parse(line('Levi was slain by Zombie'), known), null, 'unknown names are not deaths');
     assert.equal(LogEvents.parse(line('<Eren> hi', 'Worker-1')), null);
 
@@ -60,8 +64,12 @@ test('join and leave lines track sessions and playtime', async () => {
         if (event.type === 'join') players.join(event.name);
         if (event.type === 'leave') players.leave(event.name);
     });
-    minecraft.emit('line', line('Eren joined the game'));
+    const comms = [];
+    logEvents.on('event', (event) => comms.push(event.type));
+    minecraft.emit('line', line('Eren[/100.64.0.5:5000] logged in with entity id 25 at (1, 2, 3)'));
+    minecraft.emit('line', line('System chat: Eren joined the game'));
     assert.deepEqual(players.online, ['Eren']);
+    assert.deepEqual(comms, ['join'], 'login and chat lines give one join');
     players.store.update((h) => { h.Eren.sessionStart -= 60000; });
     minecraft.emit('line', line('Eren left the game'));
     assert.deepEqual(players.online, []);

@@ -64,7 +64,7 @@ const adminRouter = ({ auth, discord, clientSync }) => {
             clientName: discord.settings().clientName || '',
             agentReady: Boolean(manifest.agent),
             setupUrl: `${base}/client/${token}/${manifest.brand.setupFile}`,
-            setupCommand: `powershell -ep bypass -c "irm ${base}/client/${token}/setup.ps1|iex"`,
+            setupCommand: clientSync.setupCommand(base, token),
             clients: clientSync.recentClients(),
             setups: manifest.setups.map((setup) => ({ ...setup, extras: clientSync.extrasOf(setup.id) })),
         };

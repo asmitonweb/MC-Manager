@@ -203,7 +203,12 @@ test('player endpoints need the token and serve the setup files', async () => {
         assert.ok(!/[^\x00-\x7f]/.test(ps1), 'setup script is ASCII');
         const cmd = await fetch(`${base}/client/${TOKEN}/ClosedRoom-Setup.cmd`);
         assert.match(cmd.headers.get('content-disposition'), /ClosedRoom-Setup\.cmd/);
-        assert.match(await cmd.text(), /irm '.*\/setup\.ps1' \| iex/);
+        const cmdText = await cmd.text();
+        assert.doesNotMatch(cmdText, /\biex\b|\birm /, 'no download-and-evaluate cradle');
+        assert.ok(cmdText.includes('##MCM-SCRIPT\r\n# '), 'script embedded after the marker');
+        assert.ok(cmdText.includes(`$Token = '${TOKEN}'`));
+        assert.equal(ctx.clientSync.setupCommand('http://h:3000', TOKEN),
+            `powershell -c "iwr http://h:3000/client/${TOKEN}/ClosedRoom-Setup.cmd -UseBasicParsing -OutFile $env:TEMP\\ClosedRoom-Setup.cmd; & $env:TEMP\\ClosedRoom-Setup.cmd"`);
         assert.equal((await fetch(`${base}/client/${TOKEN}/file/fabric-1.21.1/mods/server-only.jar`)).status, 404);
         assert.equal(await (await fetch(`${base}/client/${TOKEN}/file/fabric-1.21.1/mods/aot.jar`)).text(), 'aot-jar');
     } finally {
@@ -279,4 +284,58 @@ test('the agent syncs a player folder against the manager', { skip: !hasJava && 
     } finally {
         server.close();
     }
+});
+
+const { satisfies } = require('../lib/fabric-meta');
+const { zipFiles } = require('../lib/archive');
+
+test('Fabric version ranges', () => {
+    assert.ok(satisfies('0.6.13+mc1.21.1', ['0.6.x']));
+    assert.ok(!satisfies('0.8.13+mc1.21.1', ['0.6.x']));
+    assert.ok(satisfies('0.9.2+mc26.3', '0.9.x'));
+    assert.ok(satisfies('1.4.0', '>=1.2 <2'));
+    assert.ok(!satisfies('2.0.0', '>=1.2 <2'));
+    assert.ok(satisfies('1.2.9', '~1.2.3') && !satisfies('1.3.0', '~1.2.3'));
+    assert.ok(satisfies('1.9.0', '^1.2') && !satisfies('2.0.0', '^1.2'));
+    assert.ok(satisfies('anything', '*'));
+    assert.ok(satisfies('0.15.0-beta.1', '<0.15.0') && !satisfies('0.15.0', '<0.15.0'));
+});
+
+test('a dependency is stepped back to the version its dependent requires (Iris 1.8 needs Sodium 0.6.x)', async () => {
+    const ctx = setup();
+    const jar = (id, version, depends = {}) => ({ id, version, depends });
+    const files = {
+        'https://cdn.modrinth.com/s.zip': null,
+        'https://cdn.modrinth.com/iris.jar': jar('iris', '1.8.8+mc1.21.1', { sodium: ['0.6.x'] }),
+        'https://cdn.modrinth.com/sodium.jar': jar('sodium', '0.8.13+mc1.21.1'),
+        'https://cdn.modrinth.com/sodium-0.6.jar': jar('sodium', '0.6.13+mc1.21.1'),
+    };
+    ctx.clientSync.download = async (url, dest) => {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        if (files[url]) {
+            const json = path.join(path.dirname(dest), `${path.basename(dest)}.fabric.mod.json`);
+            fs.writeFileSync(json, JSON.stringify(files[url]));
+            await zipFiles([{ path: json, name: 'fabric.mod.json' }], dest);
+            fs.rmSync(json);
+        } else {
+            fs.writeFileSync(dest, url);
+        }
+        const content = fs.readFileSync(dest);
+        return { size: content.length, sha1: sha('sha1', content), sha512: sha('sha512', content) };
+    };
+    const modrinth = ctx.clientSync.addons.providers.modrinth;
+    modrinth.listVersions = async (projectId) => (projectId === 'AANobbMI' ? [
+        { id: 'sov', projectId, versionNumber: 'so1', published: '2026-09-01', file: { url: 'https://cdn.modrinth.com/sodium.jar', fileName: 'sodium.jar', hashes: {} }, dependencies: [] },
+        { id: 'so6', projectId, versionNumber: 'mc1.21.1-0.6.13', published: '2025-01-01', file: { url: 'https://cdn.modrinth.com/sodium-0.6.jar', fileName: 'sodium-0.6.jar', hashes: {} }, dependencies: [] },
+    ] : []);
+
+    const job = await ctx.clientSync.install({ setupId: 'fabric-1.21.1', type: 'shader', projectId: 'shader1' });
+    const done = await waitJob(ctx.operations, job);
+    assert.equal(done.status, 'succeeded', done.error?.message);
+    const extras = ctx.clientSync.extrasOf('fabric-1.21.1');
+    const sodium = extras.find((e) => e.projectId === 'AANobbMI');
+    assert.equal(sodium.versionNumber, 'mc1.21.1-0.6.13');
+    assert.equal(sodium.fileName, 'sodium-0.6.jar');
+    assert.ok(fs.existsSync(path.join(ctx.clientSync.extrasDir('fabric-1.21.1', 'mods'), 'sodium-0.6.jar')));
+    assert.ok(!fs.existsSync(path.join(ctx.clientSync.extrasDir('fabric-1.21.1', 'mods'), 'sodium.jar')));
 });
