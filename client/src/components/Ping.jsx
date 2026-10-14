@@ -71,7 +71,7 @@ const Ping = () => {
                 } else {
                     throw new Error('Server error');
                 }
-            } catch (e) {
+            } catch {
                 addLine(`Request timed out.`, 'text-red-400');
             }
 

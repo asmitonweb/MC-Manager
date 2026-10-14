@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SocketProvider } from './context/SocketContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Console from './components/Console';
@@ -12,6 +13,11 @@ import ResourceGraph from './components/Stats/ResourceGraph';
 import Settings from './components/Settings/Settings';
 import ServerControls from './components/ServerControls';
 import Ping from './components/Ping';
+import ServerPage from './pages/ServerPage';
+import WorldsPage from './pages/WorldsPage';
+import ModsPage from './pages/ModsPage';
+import DiscordPage from './pages/DiscordPage';
+import GameSyncPage from './pages/GameSyncPage';
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -34,7 +40,9 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/" element={
             <ProtectedRoute>
-              <Dashboard />
+              <SocketProvider>
+                <Dashboard />
+              </SocketProvider>
             </ProtectedRoute>
           }>
             {/* Admin Routes */}
@@ -43,6 +51,11 @@ function App() {
             <Route path="players" element={<AdminRoute><Players /></AdminRoute>} />
             <Route path="stats" element={<AdminRoute><ResourceGraph /></AdminRoute>} />
             <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
+            <Route path="server" element={<AdminRoute><ServerPage /></AdminRoute>} />
+            <Route path="worlds" element={<AdminRoute><WorldsPage /></AdminRoute>} />
+            <Route path="mods" element={<AdminRoute><ModsPage /></AdminRoute>} />
+            <Route path="game-sync" element={<AdminRoute><GameSyncPage /></AdminRoute>} />
+            <Route path="discord" element={<AdminRoute><DiscordPage /></AdminRoute>} />
 
             {/* Shared Routes */}
             <Route path="map" element={<MapFrame />} />
